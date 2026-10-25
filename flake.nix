@@ -25,6 +25,9 @@
             rustfmt
             clippy
             rust-analyzer
+
+            # A real Postgres to compare pages against (pageinspect, amcheck).
+            postgresql
           ];
 
           # Lets rust-analyzer find the standard library sources.
