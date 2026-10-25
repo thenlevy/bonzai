@@ -274,10 +274,6 @@ mod tests {
         validated.page.into_owned()
     }
 
-    fn verify(page: &Page, block: BlockNumber) -> Result<(), PageError> {
-        page.try_validated_for_block(block).map(|_| ())
-    }
-
     #[test]
     fn init_matches_page_init() {
         let mut page = Page {
@@ -315,7 +311,7 @@ mod tests {
     fn all_zero_page_verifies() {
         // `extend` adds pages of zeros, which have no checksum.
         let page = Page { bytes: [0; BLCKSZ] };
-        assert_eq!(verify(&page, BlockNumber(7)), Ok(()));
+        assert!(page.try_validated_for_block(BlockNumber(7)).is_ok());
     }
 
     #[test]
@@ -330,7 +326,7 @@ mod tests {
     fn checksummed_page_verifies() {
         let page = sealed(sample_page(), BlockNumber(3));
         assert_ne!(page.header().checksum, 0);
-        assert_eq!(verify(&page, BlockNumber(3)), Ok(()));
+        assert!(page.try_validated_for_block(BlockNumber(3)).is_ok());
     }
 
     #[test]
@@ -340,7 +336,7 @@ mod tests {
             let mut corrupt = page.clone();
             corrupt[i] ^= 0xFF;
             assert!(
-                verify(&corrupt, BlockNumber(0)).is_err(),
+                corrupt.try_validated_for_block(BlockNumber(0)).is_err(),
                 "flipping byte {i} went unnoticed"
             );
         }
@@ -351,7 +347,7 @@ mod tests {
         let page = sealed(sample_page(), BlockNumber(5));
         for block in (0..1000u32).filter(|&block| block != 5) {
             assert!(matches!(
-                verify(&page, BlockNumber(block)),
+                page.try_validated_for_block(BlockNumber(block)),
                 Err(PageError::ChecksumMismatch { .. })
             ));
         }
@@ -366,12 +362,12 @@ mod tests {
         // Sealing refuses such a page, so write its checksum directly.
         let checksum = checksum_page(&page, BlockNumber(0));
         page[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
-        assert_eq!(
-            verify(&page, BlockNumber(0)),
+        assert!(matches!(
+            page.try_validated_for_block(BlockNumber(0)),
             Err(PageError::InvalidHeader {
                 block: BlockNumber(0)
             })
-        );
+        ));
     }
 
     #[test]
@@ -392,11 +388,11 @@ mod tests {
     fn zero_upper_with_data_is_not_a_new_page() {
         let mut page = Page { bytes: [0; BLCKSZ] };
         page[100] = 1;
-        assert_eq!(
-            verify(&page, BlockNumber(0)),
+        assert!(matches!(
+            page.try_validated_for_block(BlockNumber(0)),
             Err(PageError::InvalidHeader {
                 block: BlockNumber(0)
             })
-        );
+        ));
     }
 }
