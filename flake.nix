@@ -28,6 +28,9 @@
 
             # A real Postgres to compare pages against (pageinspect, amcheck).
             postgresql
+
+            # Hex viewer for looking at pages byte by byte.
+            hexyl
           ];
 
           # Lets rust-analyzer find the standard library sources.

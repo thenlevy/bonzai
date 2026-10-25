@@ -45,6 +45,17 @@ pub struct ValidatedPage<'a> {
     block: BlockNumber,
 }
 
+impl ValidatedPage<'_> {
+    pub fn page(&self) -> &Page {
+        &self.page
+    }
+
+    /// The block the page's checksum was computed for.
+    pub fn block(&self) -> BlockNumber {
+        self.block
+    }
+}
+
 pub const HEADER_SIZE: usize = 24;
 
 /// Version of this layout, kept in the low byte of `pd_pagesize_version`.
@@ -57,7 +68,7 @@ pub(crate) const PD_CHECKSUM: Range<usize> = 8..10;
 /// Every flag Postgres defines: has free line pointers, page full, all visible.
 const PD_VALID_FLAG_BITS: u16 = 0x0007;
 
-/// Postgres's `MAXIMUM_ALIGNOF`: This is the
+/// Postgres's `MAXIMUM_ALIGNOF`: This is the maximum alignment a basic C type may require.
 const MAXIMUM_ALIGNOF: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,7 +282,7 @@ mod tests {
     /// `page` with its checksum set for `block`.
     fn sealed(page: Page, block: BlockNumber) -> Page {
         let validated = page.try_set_checksum_for_block(block).unwrap();
-        validated.page.into_owned()
+        validated.page().clone()
     }
 
     #[test]
