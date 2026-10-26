@@ -9,6 +9,7 @@ pub mod storage;
 /// Number (LSN). Postgres's `XLogRecPtr`, without its invalid value 0
 /// (`InvalidXLogRecPtr`, in
 /// [xlogdefs.h](https://github.com/postgres/postgres/blob/master/src/include/access/xlogdefs.h)).
+/// See [WAL Internals](https://www.postgresql.org/docs/current/wal-internals.html).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct XLogRecPtr(
     // Postgres uses the value 0 (`InvalidXLogRecPtr`) to indicate an invalid XLogRecPtr.
@@ -37,6 +38,8 @@ const _: () = assert!(size_of::<Option<XLogRecPtr>>() == size_of::<u64>());
 /// circle (`TransactionIdPrecedes`): an XID counts the 2^31 IDs after it as
 /// newer and the ones before it as older. Going round, `a < b < c < a` can
 /// hold, so that order can't be `Ord`.
+/// See [Transactions and Identifiers](https://www.postgresql.org/docs/current/transaction-id.html)
+/// and [Preventing Transaction ID Wraparound Failures](https://www.postgresql.org/docs/current/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TransactionId(
     // Postgres uses the value 0 (`InvalidTransactionId`) to indicate an invalid transaction ID

@@ -85,6 +85,7 @@ impl From<LocationIndex> for usize {
 pub struct Header {
     /// Log Sequence Number: Position in the WAL just past the last record that changed the page,
     /// if any has.
+    /// See [WAL Internals](https://www.postgresql.org/docs/current/wal-internals.html).
     pub lsn: Option<XLogRecPtr>,
     pub checksum: u16,
     pub flags: PageFlags,
@@ -93,10 +94,12 @@ pub struct Header {
     /// Offset of the end of free space, where tuple data begins.
     pub upper: LocationIndex,
     /// Offset of the start of the special space, which the access method reserves.
+    /// See [Database Page Layout](https://www.postgresql.org/docs/current/storage-page-layout.html).
     pub special: LocationIndex,
     /// Page size in the high bits, layout version in the low byte.
     pub pagesize_version: u16,
     /// Oldest transaction whose deletions on this page could be pruned, if any.
+    /// See [Heap-Only Tuples (HOT)](https://www.postgresql.org/docs/current/storage-hot.html).
     pub prune_xid: Option<TransactionId>,
 }
 
