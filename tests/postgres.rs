@@ -13,8 +13,9 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 use bonsai::storage::checksum::checksum_page;
-use bonsai::storage::page::{Header, Page, PageError};
+use bonsai::storage::page::{Header, LocationIndex, Page, PageError, PageFlags};
 use bonsai::storage::{BLCKSZ, BlockNumber};
+use bonsai::{TransactionId, XLogRecPtr};
 
 /// The cluster `make-db.sh` builds, and the facts it saves next to it.
 const POSTGRES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/postgres");
@@ -38,21 +39,21 @@ static POSTGRES: LazyLock<Fixture> = LazyLock::new(|| {
             bytes: block.try_into().unwrap(),
         },
         header: Header {
-            lsn: facts.get("lsn"),
+            lsn: XLogRecPtr::from_raw(facts.get("lsn")),
             checksum: facts.get("checksum"),
-            flags: facts.get("flags"),
-            lower: facts.get("lower"),
-            upper: facts.get("upper"),
-            special: facts.get("special"),
+            flags: PageFlags::try_from(facts.get::<u16>("flags")).unwrap(),
+            lower: LocationIndex(facts.get("lower")),
+            upper: LocationIndex(facts.get("upper")),
+            special: LocationIndex(facts.get("special")),
             pagesize_version: facts.get("pagesize_version"),
-            prune_xid: facts.get("prune_xid"),
+            prune_xid: TransactionId::from_raw(facts.get("prune_xid")),
         },
     }
 });
 
 #[test]
 fn header_reads_like_pageinspect() {
-    assert_eq!(POSTGRES.page.header(), POSTGRES.header);
+    assert_eq!(POSTGRES.page.header(), Ok(POSTGRES.header));
 }
 
 #[test]
@@ -73,7 +74,7 @@ fn checksum_matches_postgres() {
 #[test]
 fn sealing_writes_back_what_postgres_wrote() {
     let mut page = POSTGRES.page.clone();
-    let mut header = page.header();
+    let mut header = page.header().unwrap();
     header.checksum = 0;
     page.set_header(header);
     let sealed = page.try_set_checksum_for_block(BlockNumber(0)).unwrap();

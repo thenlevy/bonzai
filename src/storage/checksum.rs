@@ -1,4 +1,4 @@
-//! AI-generated translation of Postgres's (`checksum_impl.h`)[https://github.com/postgres/postgres/blob/master/src/include/storage/checksum_impl.h].
+//! AI-generated translation of Postgres's [`checksum_impl.h`](https://github.com/postgres/postgres/blob/master/src/include/storage/checksum_impl.h).
 
 use super::{
     BLCKSZ, BlockNumber,

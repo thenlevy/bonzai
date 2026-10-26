@@ -18,7 +18,10 @@ use std::{
     ops::{Deref, DerefMut, Range},
 };
 
-use super::{BLCKSZ, BlockNumber, checksum::checksum_page};
+use {
+    super::{BLCKSZ, BlockNumber, checksum::checksum_page},
+    crate::{TransactionId, XLogRecPtr},
+};
 
 /// An 8 KB block, exactly as stored on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,44 +68,47 @@ pub const PAGE_LAYOUT_VERSION: u16 = 4;
 /// Where `pd_checksum` sits in the page.
 pub(crate) const PD_CHECKSUM: Range<usize> = 8..10;
 
-/// Every flag Postgres defines: has free line pointers, page full, all visible.
-const PD_VALID_FLAG_BITS: u16 = 0x0007;
-
 /// Postgres's `MAXIMUM_ALIGNOF`: This is the maximum alignment a basic C type may require.
 const MAXIMUM_ALIGNOF: usize = 8;
 
+/// Offset of a byte within a page. Postgres's `LocationIndex`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LocationIndex(pub u16);
+
+impl From<LocationIndex> for usize {
+    fn from(location: LocationIndex) -> Self {
+        usize::from(location.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
-    /// Log Sequence Number: Position in the WAL just past the last record that changed the page.
-    pub lsn: u64,
+    /// Log Sequence Number: Position in the WAL just past the last record that changed the page,
+    /// if any has.
+    pub lsn: Option<XLogRecPtr>,
     pub checksum: u16,
-    pub flags: u16,
+    pub flags: PageFlags,
     /// Offset of the start of free space, just past the last line pointer.
-    pub lower: u16,
+    pub lower: LocationIndex,
     /// Offset of the end of free space, where tuple data begins.
-    pub upper: u16,
+    pub upper: LocationIndex,
     /// Offset of the start of the special space, which the access method reserves.
-    pub special: u16,
+    pub special: LocationIndex,
     /// Page size in the high bits, layout version in the low byte.
     pub pagesize_version: u16,
-    /// Oldest transaction whose deletions on this page could be pruned, or 0.
-    pub prune_xid: u32,
+    /// Oldest transaction whose deletions on this page could be pruned, if any.
+    pub prune_xid: Option<TransactionId>,
 }
 
 impl Page {
-    pub fn header(&self) -> Header {
-        // Postgres stores the LSN as two 32-bit halves, high half first.
-        let lsn = (u64::from(read_u32(self, 0)) << 32) | u64::from(read_u32(self, 4));
-        Header {
-            lsn,
-            checksum: read_u16(self, 8),
-            flags: read_u16(self, 10),
-            lower: read_u16(self, 12),
-            upper: read_u16(self, 14),
-            special: read_u16(self, 16),
-            pagesize_version: read_u16(self, 18),
-            prune_xid: read_u32(self, 20),
-        }
+    /// The page's header, parsed and checked by [`Header::try_from_raw`].
+    pub fn header(&self) -> Result<Header, InvalidHeader> {
+        Header::try_from_raw(self.header_raw())
+    }
+
+    /// The bytes of the page's header.
+    pub fn header_raw(&self) -> &[u8; HEADER_SIZE] {
+        self.bytes.first_chunk().unwrap()
     }
 
     /// Turns self into an empty page with at least `special_size` bytes of special space
@@ -113,34 +119,36 @@ impl Page {
             HEADER_SIZE + special_size <= BLCKSZ,
             "special space too large"
         );
-        let special = (BLCKSZ - special_size) as u16;
+        let special = LocationIndex((BLCKSZ - special_size) as u16);
         page.fill(0);
         page.set_header(Header {
-            lsn: 0,
+            lsn: None,
             checksum: 0,
-            flags: 0,
-            lower: HEADER_SIZE as u16,
+            flags: PageFlags::default(),
+            lower: LocationIndex(HEADER_SIZE as u16),
             upper: special,
             special,
             pagesize_version: BLCKSZ as u16 | PAGE_LAYOUT_VERSION,
-            prune_xid: 0,
+            prune_xid: None,
         });
     }
 
     pub fn is_uninitialized(&self) -> bool {
-        self.header().upper == 0
+        // `pd_upper`, read on its own: the rest of the header may not parse.
+        read_u16(self, 14) == 0
     }
 
     pub fn set_header(&mut self, header: Header) {
-        write_u32(self, 0, (header.lsn >> 32) as u32);
-        write_u32(self, 4, header.lsn as u32);
+        let lsn = header.lsn.map_or(0, u64::from);
+        write_u32(self, 0, (lsn >> 32) as u32);
+        write_u32(self, 4, lsn as u32);
         write_u16(self, 8, header.checksum);
-        write_u16(self, 10, header.flags);
-        write_u16(self, 12, header.lower);
-        write_u16(self, 14, header.upper);
-        write_u16(self, 16, header.special);
+        write_u16(self, 10, header.flags.into());
+        write_u16(self, 12, header.lower.0);
+        write_u16(self, 14, header.upper.0);
+        write_u16(self, 16, header.special.0);
         write_u16(self, 18, header.pagesize_version);
-        write_u32(self, 20, header.prune_xid);
+        write_u32(self, 20, header.prune_xid.map_or(0, u32::from));
     }
 
     /// Set the checksum for self at `block`, and locks self into a validated state.
@@ -159,7 +167,7 @@ impl Page {
             };
         }
 
-        if !self.header().is_sane() {
+        if self.header().is_err() {
             return Err(PageError::InvalidHeader { block });
         }
 
@@ -187,16 +195,18 @@ impl Page {
                 Err(PageError::InvalidHeader { block })
             };
         }
-        let header = self.header();
+        // Read on its own, so that a checksum mismatch is reported even when
+        // `header()` rejects the header.
+        let stored = read_u16(self, PD_CHECKSUM.start);
         let computed = checksum_page(self, block);
-        if header.checksum != computed {
+        if stored != computed {
             return Err(PageError::ChecksumMismatch {
                 block,
-                stored: header.checksum,
+                stored,
                 computed,
             });
         }
-        if !header.is_sane() {
+        if self.header().is_err() {
             return Err(PageError::InvalidHeader { block });
         }
         Ok(ValidatedPage {
@@ -207,16 +217,75 @@ impl Page {
 }
 
 impl Header {
-    /// The checks Postgres runs before letting a page into the buffer pool.
-    /// They don't prove the header right, only plausible.
-    fn is_sane(&self) -> bool {
-        self.flags & !PD_VALID_FLAG_BITS == 0
-            && self.lower <= self.upper
-            && self.upper <= self.special
-            && usize::from(self.special) <= BLCKSZ
-            && usize::from(self.special) % MAXIMUM_ALIGNOF == 0
+    /// Parses a header, with the checks Postgres runs before letting a page
+    /// into the buffer pool. They don't prove the header right, only plausible.
+    pub fn try_from_raw(raw: &[u8; HEADER_SIZE]) -> Result<Self, InvalidHeader> {
+        // Postgres stores the LSN as two 32-bit halves, high half first.
+        let lsn = (u64::from(read_u32(raw, 0)) << 32) | u64::from(read_u32(raw, 4));
+        let header = Header {
+            lsn: XLogRecPtr::from_raw(lsn),
+            checksum: read_u16(raw, 8),
+            flags: PageFlags::try_from(read_u16(raw, 10))?,
+            lower: LocationIndex(read_u16(raw, 12)),
+            upper: LocationIndex(read_u16(raw, 14)),
+            special: LocationIndex(read_u16(raw, 16)),
+            pagesize_version: read_u16(raw, 18),
+            prune_xid: TransactionId::from_raw(read_u32(raw, 20)),
+        };
+        let Header {
+            lower,
+            upper,
+            special,
+            ..
+        } = header;
+        if !(lower <= upper
+            && upper <= special
+            && usize::from(special) <= BLCKSZ
+            && usize::from(special) % MAXIMUM_ALIGNOF == 0)
+        {
+            return Err(InvalidHeader::Offsets {
+                lower,
+                upper,
+                special,
+            });
+        }
+        Ok(header)
     }
 }
+
+/// Why a header fails the checks Postgres runs before letting a page into the
+/// buffer pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidHeader {
+    /// `pd_flags` has a bit set that Postgres doesn't define.
+    Flags(u16),
+    /// `pd_lower`, `pd_upper` and `pd_special` are out of order or off the
+    /// page, or `pd_special` isn't aligned.
+    Offsets {
+        lower: LocationIndex,
+        upper: LocationIndex,
+        special: LocationIndex,
+    },
+}
+
+impl fmt::Display for InvalidHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InvalidHeader::Flags(bits) => write!(f, "invalid page flags {bits:#06x}"),
+            InvalidHeader::Offsets {
+                lower,
+                upper,
+                special,
+            } => write!(
+                f,
+                "invalid page offsets: lower {}, upper {}, special {}",
+                lower.0, upper.0, special.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InvalidHeader {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageError {
@@ -249,12 +318,65 @@ impl fmt::Display for PageError {
 
 impl std::error::Error for PageError {}
 
-fn read_u16(page: &Page, offset: usize) -> u16 {
-    u16::from_le_bytes([page[offset], page[offset + 1]])
+/// The bits of `pd_flags`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PageFlags {
+    /// Some line pointers before `pd_lower` are unused and can be reused. A
+    /// hint: changes to it aren't WAL-logged. Postgres's `PD_HAS_FREE_LINES`.
+    pub has_free_lines: bool,
+    /// An UPDATE found no room on the page for its new row version, so pruning
+    /// the page may help. A hint too. Postgres's `PD_PAGE_FULL`.
+    pub page_full: bool,
+    /// Every row on the page is visible to every transaction, current and
+    /// future. Set by VACUUM, along with the page's bit in the visibility map.
+    /// Postgres's `PD_ALL_VISIBLE`.
+    pub all_visible: bool,
 }
 
-fn read_u32(page: &Page, offset: usize) -> u32 {
-    u32::from_le_bytes(page[offset..offset + 4].try_into().unwrap())
+const PD_HAS_FREE_LINES: u16 = 0x0001;
+const PD_PAGE_FULL: u16 = 0x0002;
+const PD_ALL_VISIBLE: u16 = 0x0004;
+/// Every flag Postgres defines.
+const PD_VALID_FLAG_BITS: u16 = PD_HAS_FREE_LINES | PD_PAGE_FULL | PD_ALL_VISIBLE;
+
+/// Fails if a bit Postgres doesn't define is set.
+impl TryFrom<u16> for PageFlags {
+    type Error = InvalidHeader;
+
+    fn try_from(bits: u16) -> Result<Self, Self::Error> {
+        if bits & !PD_VALID_FLAG_BITS != 0 {
+            return Err(InvalidHeader::Flags(bits));
+        }
+        Ok(PageFlags {
+            has_free_lines: bits & PD_HAS_FREE_LINES != 0,
+            page_full: bits & PD_PAGE_FULL != 0,
+            all_visible: bits & PD_ALL_VISIBLE != 0,
+        })
+    }
+}
+
+impl From<PageFlags> for u16 {
+    fn from(flags: PageFlags) -> Self {
+        let mut bits = 0;
+        if flags.has_free_lines {
+            bits |= PD_HAS_FREE_LINES;
+        }
+        if flags.page_full {
+            bits |= PD_PAGE_FULL;
+        }
+        if flags.all_visible {
+            bits |= PD_ALL_VISIBLE;
+        }
+        bits
+    }
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
 fn write_u16(page: &mut Page, offset: usize, value: u16) {
@@ -291,29 +413,35 @@ mod tests {
             bytes: [0xAB; BLCKSZ],
         };
         Page::init(&mut page, 12);
-        let header = page.header();
-        assert_eq!(header.lower, 24);
-        assert_eq!(header.upper, 8192 - 16);
-        assert_eq!(header.special, 8192 - 16);
+        let header = page.header().unwrap();
+        assert_eq!(header.lower, LocationIndex(24));
+        assert_eq!(header.upper, LocationIndex(8192 - 16));
+        assert_eq!(header.special, LocationIndex(8192 - 16));
         assert_eq!(header.pagesize_version, 8196);
+        assert_eq!(header.lsn, None);
+        assert_eq!(header.prune_xid, None);
         assert!(page[HEADER_SIZE..].iter().all(|&byte| byte == 0));
     }
 
     #[test]
     fn header_round_trips() {
         let header = Header {
-            lsn: 0x0000_0001_0A2B_3C4D,
+            lsn: XLogRecPtr::from_raw(0x0000_0001_0A2B_3C4D),
             checksum: 0x1234,
-            flags: 0x0005,
-            lower: 40,
-            upper: 8000,
-            special: 8176,
+            flags: PageFlags {
+                has_free_lines: true,
+                page_full: false,
+                all_visible: true,
+            },
+            lower: LocationIndex(40),
+            upper: LocationIndex(8000),
+            special: LocationIndex(8176),
             pagesize_version: 8196,
-            prune_xid: 742,
+            prune_xid: TransactionId::from_raw(742),
         };
         let mut page = Page { bytes: [0; BLCKSZ] };
         page.set_header(header);
-        assert_eq!(page.header(), header);
+        assert_eq!(page.header(), Ok(header));
         // High half of the LSN first, each half little-endian.
         assert_eq!(page[..8], [0x01, 0, 0, 0, 0x4D, 0x3C, 0x2B, 0x0A]);
     }
@@ -336,7 +464,7 @@ mod tests {
     #[test]
     fn checksummed_page_verifies() {
         let page = sealed(sample_page(), BlockNumber(3));
-        assert_ne!(page.header().checksum, 0);
+        assert_ne!(page.header().unwrap().checksum, 0);
         assert!(page.try_validated_for_block(BlockNumber(3)).is_ok());
     }
 
@@ -367,10 +495,27 @@ mod tests {
     #[test]
     fn insane_header_is_caught_even_with_a_good_checksum() {
         let mut page = sample_page();
-        let mut header = page.header();
-        header.lower = header.upper + 8;
+        let mut header = page.header().unwrap();
+        header.lower = LocationIndex(header.upper.0 + 8);
         page.set_header(header);
+        assert!(matches!(page.header(), Err(InvalidHeader::Offsets { .. })));
         // Sealing refuses such a page, so write its checksum directly.
+        let checksum = checksum_page(&page, BlockNumber(0));
+        page[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
+        assert!(matches!(
+            page.try_validated_for_block(BlockNumber(0)),
+            Err(PageError::InvalidHeader {
+                block: BlockNumber(0)
+            })
+        ));
+    }
+
+    #[test]
+    fn unknown_flag_is_caught_even_with_a_good_checksum() {
+        let mut page = sample_page();
+        // No `PageFlags` can hold this bit, so write `pd_flags` directly.
+        write_u16(&mut page, 10, 0x0008);
+        assert_eq!(page.header(), Err(InvalidHeader::Flags(0x0008)));
         let checksum = checksum_page(&page, BlockNumber(0));
         page[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         assert!(matches!(
@@ -384,8 +529,8 @@ mod tests {
     #[test]
     fn sealing_an_insane_header_fails() {
         let mut page = sample_page();
-        let mut header = page.header();
-        header.lower = header.upper + 8;
+        let mut header = page.header().unwrap();
+        header.lower = LocationIndex(header.upper.0 + 8);
         page.set_header(header);
         assert_eq!(
             page.try_set_checksum_for_block(BlockNumber(0)).err(),
