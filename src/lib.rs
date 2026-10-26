@@ -34,10 +34,9 @@ const _: () = assert!(size_of::<Option<XLogRecPtr>>() == size_of::<u64>());
 /// Identifies a transaction. See
 /// [transam.h](https://github.com/postgres/postgres/blob/master/src/include/access/transam.h).
 ///
-/// Not ordered: XIDs wrap around after 2^32, so Postgres compares them on a
-/// circle (`TransactionIdPrecedes`): an XID counts the 2^31 IDs after it as
-/// newer and the ones before it as older. Going round, `a < b < c < a` can
-/// hold, so that order can't be `Ord`.
+/// XIDs wrap around after 2^32, and are compared "on a circle" (`TransactionIdPrecedes`):
+/// An XID counts the 2^31 IDs after it as newer and the ones before it as older.
+///
 /// See [Transactions and Identifiers](https://www.postgresql.org/docs/current/transaction-id.html)
 /// and [Preventing Transaction ID Wraparound Failures](https://www.postgresql.org/docs/current/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
