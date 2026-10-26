@@ -99,7 +99,8 @@ pub struct Header {
     /// Page size in the high bits, layout version in the low byte.
     pub pagesize_version: u16,
     /// Oldest transaction whose deletions on this page could be pruned, if any.
-    /// See [Heap-Only Tuples (HOT)](https://www.postgresql.org/docs/current/storage-hot.html).
+    /// See [Heap-Only Tuples (HOT)](https://www.postgresql.org/docs/current/storage-hot.html),
+    /// and chapter 5, "Page Pruning and HOT Updates", of *PostgreSQL 14 Internals* by Egor Rogov.
     pub prune_xid: Option<TransactionId>,
 }
 
