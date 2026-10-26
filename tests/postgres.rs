@@ -1,21 +1,25 @@
 //! Mine vs theirs: a heap page written by a real Postgres with data checksums
-//! on. Generate it first, from the dev shell:
+//! on, read straight from the cluster's files. Build the cluster first, from
+//! the dev shell:
 //!
 //! ```sh
-//! tests/fixtures/make-bin.sh tests/fixtures/postgres-heap-page.sql
+//! tests/fixtures/make-db.sh
 //! ```
 
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fs;
+use std::str::FromStr;
 use std::sync::LazyLock;
 
 use bonsai::storage::checksum::checksum_page;
 use bonsai::storage::page::{Header, Page, PageError};
 use bonsai::storage::{BLCKSZ, BlockNumber};
 
-/// Where `make-bin.sh` saves what the fixture scripts print.
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/target/fixtures");
+/// The cluster `make-db.sh` builds, and the facts it saves next to it.
+const POSTGRES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/postgres");
 
-/// What `postgres-heap-page.sql` printed.
+/// Block 0 of the table `postgres-heap-page.sql` creates.
 struct Fixture {
     page: Page,
     /// The header as pageinspect's `page_header` reads it.
@@ -23,15 +27,26 @@ struct Fixture {
 }
 
 static POSTGRES: LazyLock<Fixture> = LazyLock::new(|| {
-    let bytes = read("postgres-heap-page.bin");
-    let size = bytes.len();
-    let bytes = bytes
-        .try_into()
-        .unwrap_or_else(|_| panic!("expected one {BLCKSZ}-byte block, got {size} bytes"));
-    let header = String::from_utf8(read("postgres-heap-page.header")).unwrap();
+    let facts = Facts::read("postgres-heap-page");
+    let path: String = facts.get("path");
+    let file = read(&format!("data/{path}"));
+    let block = file
+        .get(..BLCKSZ)
+        .unwrap_or_else(|| panic!("{path} is shorter than a block"));
     Fixture {
-        page: Page { bytes },
-        header: parse_header(header.trim_end()),
+        page: Page {
+            bytes: block.try_into().unwrap(),
+        },
+        header: Header {
+            lsn: facts.get("lsn"),
+            checksum: facts.get("checksum"),
+            flags: facts.get("flags"),
+            lower: facts.get("lower"),
+            upper: facts.get("upper"),
+            special: facts.get("special"),
+            pagesize_version: facts.get("pagesize_version"),
+            prune_xid: facts.get("prune_xid"),
+        },
     }
 });
 
@@ -75,32 +90,33 @@ fn postgres_page_at_another_block_fails() {
     ));
 }
 
-/// Reads a file `make-bin.sh` saved. Panics if it isn't there.
-fn read(name: &str) -> Vec<u8> {
-    let path = format!("{FIXTURES}/{name}");
-    fs::read(&path).unwrap_or_else(|err| {
-        panic!(
-            "could not read {path}: {err}. Generate it with \
-             `tests/fixtures/make-bin.sh tests/fixtures/postgres-heap-page.sql`."
-        )
-    })
+/// What a fixture script printed: one `name=value` line per value.
+struct Facts(HashMap<String, String>);
+
+impl Facts {
+    fn read(fixture: &str) -> Self {
+        let text = String::from_utf8(read(&format!("{fixture}.facts"))).unwrap();
+        let values = text
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect();
+        Facts(values)
+    }
+
+    fn get<T: FromStr<Err: Debug>>(&self, name: &str) -> T {
+        let value = self
+            .0
+            .get(name)
+            .unwrap_or_else(|| panic!("no {name} in the facts"));
+        value.parse().unwrap()
+    }
 }
 
-/// Parses the fields `page_header` returned, separated by `|`, in the order
-/// `Header` declares them.
-fn parse_header(line: &str) -> Header {
-    let mut fields = line.split('|');
-    let mut next = || fields.next().expect("too few fields");
-    let header = Header {
-        lsn: next().parse().unwrap(),
-        checksum: next().parse().unwrap(),
-        flags: next().parse().unwrap(),
-        lower: next().parse().unwrap(),
-        upper: next().parse().unwrap(),
-        special: next().parse().unwrap(),
-        pagesize_version: next().parse().unwrap(),
-        prune_xid: next().parse().unwrap(),
-    };
-    assert!(fields.next().is_none(), "too many fields: {line}");
-    header
+/// Reads a file under `postgres/`. Panics if it isn't there.
+fn read(path: &str) -> Vec<u8> {
+    let path = format!("{POSTGRES_DIR}/{path}");
+    fs::read(&path).unwrap_or_else(|err| {
+        panic!("could not read {path}: {err}. Build the cluster with `tests/fixtures/make-db.sh`.")
+    })
 }

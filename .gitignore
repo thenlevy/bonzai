@@ -4,3 +4,6 @@
 result
 result-*
 .direnv/
+
+# Postgres cluster the tests read, rebuilt by tests/fixtures/make-db.sh
+/postgres/
