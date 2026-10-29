@@ -5,8 +5,8 @@ use std::num::{NonZeroU32, NonZeroU64};
 
 pub mod storage;
 
-/// A position in the write-ahead log, in bytes from its start: a Log Sequence
-/// Number (LSN). Postgres's `XLogRecPtr`, without its invalid value 0
+/// A position (in bytes) in the write-ahead log.
+/// Postgres's `XLogRecPtr`,
 /// (`InvalidXLogRecPtr`, in
 /// [xlogdefs.h](https://github.com/postgres/postgres/blob/master/src/include/access/xlogdefs.h)).
 /// See [WAL Internals](https://www.postgresql.org/docs/current/wal-internals.html).
