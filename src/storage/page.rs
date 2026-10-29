@@ -84,7 +84,7 @@ impl From<LocationIndex> for usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
     /// Log Sequence Number: Position in the WAL just past the last record that changed the page,
-    /// if any has.
+    /// or `None` (stored as 0) if no record has, as on a page fresh from [`Page::init`].
     /// See [WAL Internals](https://www.postgresql.org/docs/current/wal-internals.html).
     pub lsn: Option<XLogRecPtr>,
     pub checksum: u16,
@@ -98,7 +98,8 @@ pub struct Header {
     pub special: LocationIndex,
     /// Page size in the high bits, layout version in the low byte.
     pub pagesize_version: u16,
-    /// Oldest transaction whose deletions on this page could be pruned, if any.
+    /// Oldest transaction whose deletions on this page could be pruned, or `None` (stored as 0)
+    /// if there are none. Postgres only treats it as a hint, and leaves it unused on index pages.
     /// See [Heap-Only Tuples (HOT)](https://www.postgresql.org/docs/current/storage-hot.html),
     /// and chapter 5, "Page Pruning and HOT Updates", of *PostgreSQL 14 Internals* by Egor Rogov.
     pub prune_xid: Option<TransactionId>,
