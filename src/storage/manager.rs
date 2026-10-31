@@ -15,10 +15,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// How many blocks fit in a 1GB segment file.
-pub const RELSEG_SIZE: BlockCount = BlockCount(1024 * 1024 * 1024 / (BLCKSZ as u32));
+#[derive(Clone, Copy, Debug)]
+pub struct BlockIdentifier {
+    pub fork: ForkIdentifier,
+    pub block_number: BlockNumber,
+}
 
-pub struct InvalidBlockNumber;
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+pub struct ForkIdentifier {
+    pub rel: RelFileNumber,
+    pub kind: ForkKind,
+}
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub struct RelFileNumber(pub u32);
@@ -37,18 +44,6 @@ pub struct StorageManager {
     // testing.
     n_block_per_segment: BlockCount,
     opened_forks: Mutex<HashMap<ForkIdentifier, Arc<OpenFork>>>,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct ForkIdentifier {
-    pub rel: RelFileNumber,
-    pub kind: ForkKind,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct BlockIdentifier {
-    pub fork: ForkIdentifier,
-    pub block_number: BlockNumber,
 }
 
 #[derive(Debug)]
@@ -87,24 +82,6 @@ impl StorageManager {
         Self::with_segment_size(dir, RELSEG_SIZE)
     }
 
-    pub fn with_segment_size(
-        dir: impl Into<PathBuf>,
-        n_block_per_segment: BlockCount,
-    ) -> anyhow::Result<Self> {
-        assert!(
-            n_block_per_segment.0 > 0,
-            "segments must hold at least one block"
-        );
-        let dir = dir.into();
-        fs::read_dir(&dir)
-            .with_context(|| format!("could not open directory {}", dir.display()))?;
-        Ok(Self {
-            dir,
-            n_block_per_segment,
-            opened_forks: Mutex::new(HashMap::new()),
-        })
-    }
-
     /// Fetch the block from the disk and store its bits into `page`.
     pub fn read(&self, block: BlockIdentifier, page: &mut Page) -> Result<(), BlockError> {
         let fork = self.get_fork(block.fork).map_err(|err| BlockError {
@@ -129,6 +106,24 @@ impl StorageManager {
                 block,
                 inner: BlockErrorInner::Io(err),
             })
+    }
+
+    fn with_segment_size(
+        dir: impl Into<PathBuf>,
+        n_block_per_segment: BlockCount,
+    ) -> anyhow::Result<Self> {
+        assert!(
+            n_block_per_segment.0 > 0,
+            "segments must hold at least one block"
+        );
+        let dir = dir.into();
+        fs::read_dir(&dir)
+            .with_context(|| format!("could not open directory {}", dir.display()))?;
+        Ok(Self {
+            dir,
+            n_block_per_segment,
+            opened_forks: Mutex::new(HashMap::new()),
+        })
     }
 
     fn get_fork(&self, fork: ForkIdentifier) -> Result<Arc<OpenFork>, ForkError> {
@@ -239,6 +234,9 @@ impl StorageManager {
         }
     }
 }
+
+/// How many blocks fit in a 1GB segment file.
+pub const RELSEG_SIZE: BlockCount = BlockCount(1024 * 1024 * 1024 / (BLCKSZ as u32));
 
 /// A fork whose segment files are open.
 struct OpenFork {
