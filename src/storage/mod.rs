@@ -23,7 +23,7 @@ impl fmt::Display for BlockNumber {
 
 /// How many blocks a fork or a segment holds: blocks `0` to `count - 1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BlockCount(u32);
+pub struct BlockCount(pub u32);
 
 impl BlockCount {
     pub fn contains(self, block: BlockNumber) -> bool {

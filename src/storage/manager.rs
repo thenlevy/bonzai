@@ -21,7 +21,7 @@ pub const RELSEG_SIZE: BlockCount = BlockCount(1024 * 1024 * 1024 / (BLCKSZ as u
 pub struct InvalidBlockNumber;
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct RelFileNumber(u32);
+pub struct RelFileNumber(pub u32);
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub enum ForkKind {
