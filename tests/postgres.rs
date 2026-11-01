@@ -6,16 +6,16 @@
 //! tests/fixtures/make-db.sh
 //! ```
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::fs;
-use std::str::FromStr;
-use std::sync::LazyLock;
+use std::{collections::HashMap, fmt::Debug, fs, str::FromStr, sync::LazyLock};
 
-use bonsai::storage::checksum::checksum_page;
-use bonsai::storage::page::{Header, LocationIndex, Page, PageError, PageFlags};
-use bonsai::storage::{BLCKSZ, BlockNumber};
-use bonsai::{TransactionId, XLogRecPtr};
+use bonsai::{
+    TransactionId, XLogRecPtr,
+    storage::{
+        BLCKSZ, BlockNumber,
+        checksum::checksum_page,
+        page::{Header, LocationIndex, Page, PageFlags, PageValidationError},
+    },
+};
 
 /// The cluster `make-db.sh` builds, and the facts it saves next to it.
 const POSTGRES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/postgres");
@@ -86,7 +86,7 @@ fn sealing_writes_back_what_postgres_wrote() {
 fn postgres_page_at_another_block_fails() {
     assert!(matches!(
         POSTGRES.page.try_validated_for_block(BlockNumber(1)),
-        Err(PageError::ChecksumMismatch { block: BlockNumber(1), stored, .. })
+        Err(PageValidationError::ChecksumMismatch { block: BlockNumber(1), stored, .. })
             if stored == POSTGRES.header.checksum
     ));
 }
