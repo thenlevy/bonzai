@@ -4,9 +4,11 @@
 
 use std::fmt;
 
+pub mod buffer;
 pub mod checksum;
-pub mod page;
+pub mod item;
 pub mod manager;
+pub mod page;
 
 /// Size of a page, and of every block in a relation file. Postgres's `BLCKSZ`.
 pub const BLCKSZ: usize = 8192;
