@@ -271,6 +271,9 @@ pub enum InvalidHeader {
         upper: LocationIndex,
         special: LocationIndex,
     },
+    PdLowerTooSmall {
+        lower: LocationIndex,
+    },
 }
 
 impl fmt::Display for InvalidHeader {
@@ -286,6 +289,9 @@ impl fmt::Display for InvalidHeader {
                 "invalid page offsets: lower {}, upper {}, special {}",
                 lower.0, upper.0, special.0
             ),
+            InvalidHeader::PdLowerTooSmall { lower } => {
+                write!(f, "pd_lower points into the header: {}", lower.0)
+            }
         }
     }
 }

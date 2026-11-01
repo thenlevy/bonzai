@@ -6,6 +6,7 @@ use std::fmt;
 
 pub mod buffer;
 pub mod checksum;
+pub mod item;
 pub mod manager;
 pub mod page;
 
