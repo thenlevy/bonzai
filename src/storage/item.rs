@@ -10,10 +10,13 @@
 
 use super::{
     BlockNumber,
-    page::{HEADER_SIZE_BYTES, InvalidHeader, LocationIndex, Page},
+    page::{HEADER_SIZE_BYTES, InvalidHeader, LocationIndex, Page, PageWithValidatedHeader},
 };
 
 use std::{fmt, num::NonZeroU16};
+
+/// A raw slot in a page.
+pub struct Item<'a>(pub &'a [u8]);
 
 /// Identifier of a tuple: a block, and the position a line pointer in the block. Postgres's
 /// `ItemPointerData`.
@@ -101,6 +104,13 @@ impl From<u32> for LinePointer {
     }
 }
 
+pub struct InvalidItemError {
+    pub offset: LocationIndex,
+    pub len: u16,
+    pub page_pd_lower: LocationIndex,
+    pub page_pd_upper: LocationIndex,
+}
+
 impl Page {
     /// The line pointer array, between the header and `pd_lower`. Empty if
     /// `pd_lower` doesn't point past the header, as on a new, all-zero page.
@@ -112,8 +122,8 @@ impl Page {
         Ok(self
             .get(HEADER_SIZE_BYTES..usize::from(header.lower.0))
             .ok_or(
-                // self.header() checked that pd_lower was <= BLCKSZ_BYTES, so this is the only possible
-                // explanation
+                // self.header() checked that pd_lower was <= BLCKSZ_BYTES, so this is the only
+                // possible explanation
                 InvalidHeader::PdLowerTooSmall {
                     lower: header.lower,
                 },
@@ -132,5 +142,29 @@ impl Page {
             return Ok(None);
         };
         Ok(Some(LinePointer::from(u32::from_le_bytes(*raw))))
+    }
+}
+
+impl PageWithValidatedHeader<'_> {
+    pub fn item(&self, offset: LocationIndex, len: u16) -> Result<Item<'_>, InvalidItemError> {
+        let header = self.header();
+        if offset.0 < header.lower.0 || offset.0 + len > header.upper.0 {
+            return Err(InvalidItemError {
+                offset,
+                len,
+                page_pd_lower: header.lower,
+                page_pd_upper: header.upper,
+            });
+        }
+        Ok(Item(
+            self.page
+                .get(usize::from(offset.0)..usize::from(offset.0 + len))
+                .ok_or(InvalidItemError {
+                    offset,
+                    len,
+                    page_pd_lower: header.lower,
+                    page_pd_upper: header.upper,
+                })?,
+        ))
     }
 }

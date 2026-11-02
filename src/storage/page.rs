@@ -43,12 +43,25 @@ impl DerefMut for Page {
     }
 }
 
-pub struct ValidatedPage<'a> {
+/// A page along with its validated header.
+pub struct PageWithValidatedHeader<'a> {
+    pub page: &'a Page,
+    header: Header,
+}
+
+impl PageWithValidatedHeader<'_> {
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+}
+
+/// A page whose checksum has been computed for a specific block.
+pub struct ScealedValidatedPage<'a> {
     page: Cow<'a, Page>,
     block: BlockNumber,
 }
 
-impl ValidatedPage<'_> {
+impl ScealedValidatedPage<'_> {
     pub fn page(&self) -> &Page {
         &self.page
     }
@@ -111,6 +124,11 @@ impl Page {
         Header::try_from_raw(self.header_raw())
     }
 
+    pub fn with_validated_header(&self) -> Result<PageWithValidatedHeader<'_>, InvalidHeader> {
+        let header = self.header()?;
+        Ok(PageWithValidatedHeader { page: self, header })
+    }
+
     /// The bytes of the page's header.
     pub fn header_raw(&self) -> &[u8; HEADER_SIZE_BYTES] {
         self.bytes.first_chunk().unwrap()
@@ -160,10 +178,10 @@ impl Page {
     pub fn try_set_checksum_for_block(
         mut self,
         block: BlockNumber,
-    ) -> Result<ValidatedPage<'static>, PageValidationError> {
+    ) -> Result<ScealedValidatedPage<'static>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
-                Ok(ValidatedPage {
+                Ok(ScealedValidatedPage {
                     page: Cow::Owned(self),
                     block,
                 })
@@ -178,7 +196,7 @@ impl Page {
 
         let checksum = checksum_page(&self, block);
         self[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
-        Ok(ValidatedPage {
+        Ok(ScealedValidatedPage {
             page: Cow::Owned(self),
             block,
         })
@@ -189,10 +207,10 @@ impl Page {
     pub fn try_validated_for_block<'a>(
         &'a self,
         block: BlockNumber,
-    ) -> Result<ValidatedPage<'a>, PageValidationError> {
+    ) -> Result<ScealedValidatedPage<'a>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
-                Ok(ValidatedPage {
+                Ok(ScealedValidatedPage {
                     page: Cow::Borrowed(self),
                     block,
                 })
@@ -214,7 +232,7 @@ impl Page {
         if self.header().is_err() {
             return Err(PageValidationError::InvalidHeader { block });
         }
-        Ok(ValidatedPage {
+        Ok(ScealedValidatedPage {
             page: Cow::Borrowed(self),
             block,
         })
@@ -406,9 +424,14 @@ mod tests {
 
     /// An initialized page with some arbitrary bytes in its free space.
     fn sample_page() -> Page {
-        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
+        let mut page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         Page::init(&mut page, 16);
-        for (i, byte) in page[HEADER_SIZE_BYTES..BLCKSZ_BYTES - 16].iter_mut().enumerate() {
+        for (i, byte) in page[HEADER_SIZE_BYTES..BLCKSZ_BYTES - 16]
+            .iter_mut()
+            .enumerate()
+        {
             *byte = (i * 31 % 251) as u8;
         }
         page
@@ -452,7 +475,9 @@ mod tests {
             pagesize_version: 8196,
             prune_xid: TransactionId::from_raw(742),
         };
-        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
+        let mut page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         page.set_header(header);
         assert_eq!(page.header(), Ok(header));
         // High half of the LSN first, each half little-endian.
@@ -462,7 +487,9 @@ mod tests {
     #[test]
     fn all_zero_page_verifies() {
         // `extend` adds pages of zeros, which have no checksum.
-        let page = Page { bytes: [0; BLCKSZ_BYTES] };
+        let page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         assert!(page.try_validated_for_block(BlockNumber(7)).is_ok());
     }
 
@@ -470,7 +497,12 @@ mod tests {
     fn set_checksum_leaves_a_new_page_all_zeros() {
         // A checksum would make the page no longer all zeros while `upper`
         // is still 0, and `verify` would reject it as an invalid header.
-        let page = sealed(Page { bytes: [0; BLCKSZ_BYTES] }, BlockNumber(7));
+        let page = sealed(
+            Page {
+                bytes: [0; BLCKSZ_BYTES],
+            },
+            BlockNumber(7),
+        );
         assert_eq!(page.bytes, [0; BLCKSZ_BYTES]);
     }
 
@@ -555,7 +587,9 @@ mod tests {
 
     #[test]
     fn zero_upper_with_data_is_not_a_new_page() {
-        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
+        let mut page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         page[100] = 1;
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
