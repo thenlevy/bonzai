@@ -1,7 +1,7 @@
 //! AI-generated translation of Postgres's [`checksum_impl.h`](https://github.com/postgres/postgres/blob/master/src/include/storage/checksum_impl.h).
 
 use super::{
-    BLCKSZ, BlockNumber,
+    BLCKSZ_BYTES, BlockNumber,
     page::{PD_CHECKSUM, Page},
 };
 
@@ -52,7 +52,7 @@ pub fn checksum_page(page: &Page, block: BlockNumber) -> u16 {
     (checksum % 65535 + 1) as u16
 }
 
-const _: () = assert!(BLCKSZ.is_multiple_of(4 * N_SUMS));
+const _: () = assert!(BLCKSZ_BYTES.is_multiple_of(4 * N_SUMS));
 
 // The mask in `checksum_block` assumes `pd_checksum` is bytes 8..10.
 const _: () = assert!(PD_CHECKSUM.start == 8 && PD_CHECKSUM.end == 10);

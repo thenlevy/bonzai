@@ -1,7 +1,7 @@
 //! Maps (relation, fork, block) to a file and an offset, and handles storing and retrieving blocks.
 //! Postgres: `smgr.c` and `md.c`.
 
-use super::{BLCKSZ, BlockCount, BlockNumber, page::Page};
+use super::{BLCKSZ_BYTES, BlockCount, BlockNumber, page::Page};
 
 use anyhow::Context;
 
@@ -187,7 +187,7 @@ impl StorageManager {
                 inner: err.into(),
             })?
             .len();
-        let blocks = file_size / (BLCKSZ as u64);
+        let blocks = file_size / (BLCKSZ_BYTES as u64);
         if blocks > u64::from(self.n_block_per_segment.0) {
             return Err(ForkError {
                 fork,
@@ -227,7 +227,7 @@ impl StorageManager {
 
     fn position(&self, block: BlockNumber) -> Position {
         let segno = block.0 / self.n_block_per_segment.0;
-        let offset = u64::from(block.0 % self.n_block_per_segment.0) * BLCKSZ as u64;
+        let offset = u64::from(block.0 % self.n_block_per_segment.0) * BLCKSZ_BYTES as u64;
         Position {
             segno,
             offset_bytes: offset,
@@ -236,7 +236,7 @@ impl StorageManager {
 }
 
 /// How many blocks fit in a 1GB segment file.
-pub const RELSEG_SIZE: BlockCount = BlockCount(1024 * 1024 * 1024 / (BLCKSZ as u32));
+pub const RELSEG_SIZE: BlockCount = BlockCount(1024 * 1024 * 1024 / (BLCKSZ_BYTES as u32));
 
 /// A fork whose segment files are open.
 struct OpenFork {
@@ -282,7 +282,7 @@ mod tests {
     /// byte `first + i`.
     fn write_blocks(dir: &Path, name: &str, first: u8, count: u8) {
         let bytes: Vec<u8> = (first..first + count)
-            .flat_map(|byte| [byte; BLCKSZ])
+            .flat_map(|byte| [byte; BLCKSZ_BYTES])
             .collect();
         fs::write(dir.join(name), bytes).unwrap();
     }
@@ -302,7 +302,7 @@ mod tests {
             fork: MAIN,
             block_number: BlockNumber(block_number),
         };
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
         smgr.read(block, &mut page).map(|()| page)
     }
 
@@ -327,7 +327,7 @@ mod tests {
         for block_number in 0..5 {
             let page = read(&smgr, block_number).unwrap();
             assert!(
-                page.bytes == [block_number as u8; BLCKSZ],
+                page.bytes == [block_number as u8; BLCKSZ_BYTES],
                 "block {block_number}"
             );
         }
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn a_partial_block_at_the_end_does_not_count() {
         let dir = tempfile::tempdir().unwrap();
-        let mut bytes = vec![0; BLCKSZ];
+        let mut bytes = vec![0; BLCKSZ_BYTES];
         bytes.extend([1; 100]);
         fs::write(dir.path().join("16384"), bytes).unwrap();
         let smgr = StorageManager::open(dir.path()).unwrap();
@@ -411,7 +411,7 @@ mod tests {
                         ..
                     },
                     ..
-                }) if *file_size == 3 * BLCKSZ as u64
+                }) if *file_size == 3 * BLCKSZ_BYTES as u64
             ),
             "{result:?}"
         );

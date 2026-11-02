@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt::Debug, fs, str::FromStr, sync::LazyLock};
 use bonsai::{
     TransactionId, XLogRecPtr,
     storage::{
-        BLCKSZ, BlockNumber,
+        BLCKSZ_BYTES, BlockNumber,
         checksum::checksum_page,
         page::{Header, LocationIndex, Page, PageFlags, PageValidationError},
     },
@@ -32,7 +32,7 @@ static POSTGRES: LazyLock<Fixture> = LazyLock::new(|| {
     let path: String = facts.get("path");
     let file = read(&format!("data/{path}"));
     let block = file
-        .get(..BLCKSZ)
+        .get(..BLCKSZ_BYTES)
         .unwrap_or_else(|| panic!("{path} is shorter than a block"));
     Fixture {
         page: Page {

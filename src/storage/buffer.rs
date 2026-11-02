@@ -6,7 +6,7 @@
 use std::marker::PhantomData;
 
 use super::{
-    BLCKSZ,
+    BLCKSZ_BYTES,
     manager::{BlockError, BlockIdentifier, StorageManager},
     page::{Page, PageValidationError},
 };
@@ -41,7 +41,7 @@ impl BufferManager {
 
     /// Read `block`, and returns a guarded page after validating it.
     pub fn validated_read(&self, block: BlockIdentifier) -> Result<PageGuard<'_>, ReadError> {
-        let mut page = Box::new(Page { bytes: [0; BLCKSZ] });
+        let mut page = Box::new(Page { bytes: [0; BLCKSZ_BYTES] });
         self.smgr.read(block, &mut page).map_err(ReadError::Block)?;
         page.try_validated_for_block(block.block_number)
             .map_err(ReadError::Page)?;
@@ -77,7 +77,7 @@ mod tests {
     }
 
     fn sealed_page(block_number: u32) -> Page {
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
         Page::init(&mut page, 0);
         let sealed = page
             .try_set_checksum_for_block(BlockNumber(block_number))

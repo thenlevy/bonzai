@@ -9,7 +9,7 @@ use bonsai::storage::manager::{
     StorageManager,
 };
 use bonsai::storage::page::Page;
-use bonsai::storage::{BLCKSZ, BlockCount, BlockNumber};
+use bonsai::storage::{BLCKSZ_BYTES, BlockCount, BlockNumber};
 
 /// The `postgres` database (OID 5) of the cluster `tests/fixtures/make-db.sh`
 /// builds.
@@ -31,13 +31,13 @@ fn every_fork_of_the_fixture_database_reads_back() {
             continue;
         };
         let file = fs::read(&path).unwrap();
-        // So that each fork is a single file, and block `n` sits at `n * BLCKSZ` in it.
+        // So that each fork is a single file, and block `n` sits at `n * BLCKSZ_BYTES` in it.
         assert!(
             !path.with_extension("1").exists(),
             "{path:?} has a second segment"
         );
-        let nb_blocks = (file.len() / BLCKSZ) as u32;
-        for (n, expected) in (0..).zip(file.chunks_exact(BLCKSZ)) {
+        let nb_blocks = (file.len() / BLCKSZ_BYTES) as u32;
+        for (n, expected) in (0..).zip(file.chunks_exact(BLCKSZ_BYTES)) {
             let page = read(&smgr, fork, n).unwrap();
             assert!(page.bytes == expected, "{path:?}: block {n} differs");
             if let Err(err) = page.try_validated_for_block(BlockNumber(n)) {
@@ -77,7 +77,7 @@ fn read(smgr: &StorageManager, fork: ForkIdentifier, block: u32) -> Result<Page,
         fork,
         block_number: BlockNumber(block),
     };
-    let mut page = Page { bytes: [0; BLCKSZ] };
+    let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
     smgr.read(block, &mut page).map(|()| page)
 }
 

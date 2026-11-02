@@ -19,14 +19,14 @@ use std::{
 };
 
 use {
-    super::{BLCKSZ, BlockNumber, checksum::checksum_page},
+    super::{BLCKSZ_BYTES, BlockNumber, checksum::checksum_page},
     crate::{TransactionId, XLogRecPtr},
 };
 
 /// An 8 KB block, exactly as stored on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
-    pub bytes: [u8; BLCKSZ],
+    pub bytes: [u8; BLCKSZ_BYTES],
 }
 
 impl Deref for Page {
@@ -59,7 +59,7 @@ impl ValidatedPage<'_> {
     }
 }
 
-pub const HEADER_SIZE: usize = 24;
+pub const HEADER_SIZE_BYTES: usize = 24;
 
 /// Version of this layout, kept in the low byte of `pd_pagesize_version`.
 /// Postgres's `PG_PAGE_LAYOUT_VERSION`, which has been 4 since Postgres 8.3.
@@ -68,8 +68,8 @@ pub const PAGE_LAYOUT_VERSION: u16 = 4;
 /// Where `pd_checksum` sits in the page.
 pub(crate) const PD_CHECKSUM: Range<usize> = 8..10;
 
-/// Postgres's `MAXIMUM_ALIGNOF`: This is the maximum alignment a basic C type may require.
-const MAXIMUM_ALIGNOF: usize = 8;
+/// Maximum alignment a basic C type may require, in bytes. Postgres's `MAXIMUM_ALIGNOF`.
+const MAXIMUM_ALIGNOF_BYTES: usize = 8;
 
 /// Offset of a byte within a page. Postgres's `LocationIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -112,28 +112,28 @@ impl Page {
     }
 
     /// The bytes of the page's header.
-    pub fn header_raw(&self) -> &[u8; HEADER_SIZE] {
+    pub fn header_raw(&self) -> &[u8; HEADER_SIZE_BYTES] {
         self.bytes.first_chunk().unwrap()
     }
 
     /// Turns self into an empty page with at least `special_size` bytes of special space
     /// at the end. Postgres's `PageInit`.
     pub fn init(page: &mut Page, special_size: usize) {
-        let special_size = special_size.next_multiple_of(MAXIMUM_ALIGNOF);
+        let special_size = special_size.next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
         assert!(
-            HEADER_SIZE + special_size <= BLCKSZ,
+            HEADER_SIZE_BYTES + special_size <= BLCKSZ_BYTES,
             "special space too large"
         );
-        let special = LocationIndex((BLCKSZ - special_size) as u16);
+        let special = LocationIndex((BLCKSZ_BYTES - special_size) as u16);
         page.fill(0);
         page.set_header(Header {
             lsn: None,
             checksum: 0,
             flags: PageFlags::default(),
-            lower: LocationIndex(HEADER_SIZE as u16),
+            lower: LocationIndex(HEADER_SIZE_BYTES as u16),
             upper: special,
             special,
-            pagesize_version: BLCKSZ as u16 | PAGE_LAYOUT_VERSION,
+            pagesize_version: BLCKSZ_BYTES as u16 | PAGE_LAYOUT_VERSION,
             prune_xid: None,
         });
     }
@@ -224,7 +224,7 @@ impl Page {
 impl Header {
     /// Parses a header, with the checks Postgres runs before letting a page
     /// into the buffer pool. They don't prove the header right, only plausible.
-    pub fn try_from_raw(raw: &[u8; HEADER_SIZE]) -> Result<Self, InvalidHeader> {
+    pub fn try_from_raw(raw: &[u8; HEADER_SIZE_BYTES]) -> Result<Self, InvalidHeader> {
         // Postgres stores the LSN as two 32-bit halves, high half first.
         let lsn = (u64::from(read_u32(raw, 0)) << 32) | u64::from(read_u32(raw, 4));
         let header = Header {
@@ -245,8 +245,8 @@ impl Header {
         } = header;
         if !(lower <= upper
             && upper <= special
-            && usize::from(special) <= BLCKSZ
-            && usize::from(special) % MAXIMUM_ALIGNOF == 0)
+            && usize::from(special) <= BLCKSZ_BYTES
+            && usize::from(special) % MAXIMUM_ALIGNOF_BYTES == 0)
         {
             return Err(InvalidHeader::Offsets {
                 lower,
@@ -406,9 +406,9 @@ mod tests {
 
     /// An initialized page with some arbitrary bytes in its free space.
     fn sample_page() -> Page {
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
         Page::init(&mut page, 16);
-        for (i, byte) in page[HEADER_SIZE..BLCKSZ - 16].iter_mut().enumerate() {
+        for (i, byte) in page[HEADER_SIZE_BYTES..BLCKSZ_BYTES - 16].iter_mut().enumerate() {
             *byte = (i * 31 % 251) as u8;
         }
         page
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn init_matches_page_init() {
         let mut page = Page {
-            bytes: [0xAB; BLCKSZ],
+            bytes: [0xAB; BLCKSZ_BYTES],
         };
         Page::init(&mut page, 12);
         let header = page.header().unwrap();
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(header.pagesize_version, 8196);
         assert_eq!(header.lsn, None);
         assert_eq!(header.prune_xid, None);
-        assert!(page[HEADER_SIZE..].iter().all(|&byte| byte == 0));
+        assert!(page[HEADER_SIZE_BYTES..].iter().all(|&byte| byte == 0));
     }
 
     #[test]
@@ -452,7 +452,7 @@ mod tests {
             pagesize_version: 8196,
             prune_xid: TransactionId::from_raw(742),
         };
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
         page.set_header(header);
         assert_eq!(page.header(), Ok(header));
         // High half of the LSN first, each half little-endian.
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn all_zero_page_verifies() {
         // `extend` adds pages of zeros, which have no checksum.
-        let page = Page { bytes: [0; BLCKSZ] };
+        let page = Page { bytes: [0; BLCKSZ_BYTES] };
         assert!(page.try_validated_for_block(BlockNumber(7)).is_ok());
     }
 
@@ -470,8 +470,8 @@ mod tests {
     fn set_checksum_leaves_a_new_page_all_zeros() {
         // A checksum would make the page no longer all zeros while `upper`
         // is still 0, and `verify` would reject it as an invalid header.
-        let page = sealed(Page { bytes: [0; BLCKSZ] }, BlockNumber(7));
-        assert_eq!(page.bytes, [0; BLCKSZ]);
+        let page = sealed(Page { bytes: [0; BLCKSZ_BYTES] }, BlockNumber(7));
+        assert_eq!(page.bytes, [0; BLCKSZ_BYTES]);
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn every_flipped_byte_is_caught() {
         let page = sealed(sample_page(), BlockNumber(0));
-        for i in 0..BLCKSZ {
+        for i in 0..BLCKSZ_BYTES {
             let mut corrupt = page.clone();
             corrupt[i] ^= 0xFF;
             assert!(
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn zero_upper_with_data_is_not_a_new_page() {
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
         page[100] = 1;
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),

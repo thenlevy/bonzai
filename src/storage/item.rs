@@ -10,7 +10,7 @@
 
 use super::{
     BlockNumber,
-    page::{HEADER_SIZE, InvalidHeader, LocationIndex, Page},
+    page::{HEADER_SIZE_BYTES, InvalidHeader, LocationIndex, Page},
 };
 
 use std::{fmt, num::NonZeroU16};
@@ -24,13 +24,13 @@ pub struct Tid {
 }
 
 /// Size of a TID on disk. Postgres's `sizeof(ItemPointerData)`.
-pub const TID_SIZE: usize = 6;
+pub const TID_SIZE_BYTES: usize = 6;
 
 impl Tid {
     /// Reads a TID as stored in a tuple. The block number is two 16-bit
     /// halves, high half first, so that the struct needs only 2-byte
     /// alignment: Postgres's `BlockIdData`.
-    pub fn from_bytes(bytes: &[u8; TID_SIZE]) -> Option<Self> {
+    pub fn from_bytes(bytes: &[u8; TID_SIZE_BYTES]) -> Option<Self> {
         let half = |i: usize| u32::from(u16::from_le_bytes([bytes[i], bytes[i + 1]]));
         Some(Tid {
             block: BlockNumber((half(0) << 16) | half(2)),
@@ -53,7 +53,7 @@ impl fmt::Display for Tid {
 pub struct OffsetNumber(pub NonZeroU16);
 
 /// Size of a line pointer. Postgres's `sizeof(ItemIdData)`.
-pub const LINE_POINTER_SIZE: usize = 4;
+pub const LINE_POINTER_SIZE_BYTES: usize = 4;
 
 /// A line pointer, Postgres's `ItemIdData`.
 ///
@@ -104,15 +104,15 @@ impl From<u32> for LinePointer {
 impl Page {
     /// The line pointer array, between the header and `pd_lower`. Empty if
     /// `pd_lower` doesn't point past the header, as on a new, all-zero page.
-    fn line_pointers(&self) -> Result<&[[u8; LINE_POINTER_SIZE]], InvalidHeader> {
+    fn line_pointers(&self) -> Result<&[[u8; LINE_POINTER_SIZE_BYTES]], InvalidHeader> {
         if self.is_uninitialized() {
             return Ok(&[].as_chunks().0);
         }
         let header = self.header()?;
         Ok(self
-            .get(HEADER_SIZE..usize::from(header.lower.0))
+            .get(HEADER_SIZE_BYTES..usize::from(header.lower.0))
             .ok_or(
-                // self.header() checked that pd_lower was <= BLCKSZ, so this is the only possible
+                // self.header() checked that pd_lower was <= BLCKSZ_BYTES, so this is the only possible
                 // explanation
                 InvalidHeader::PdLowerTooSmall {
                     lower: header.lower,
