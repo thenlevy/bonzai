@@ -4,10 +4,11 @@
 
 use super::{Tuple, TupleError, UnimplementedTuple};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    id: i64,
-    payload: Option<String>,
-    non_null_payload: String,
+    pub id: i64,
+    pub payload: Option<String>,
+    pub non_null_payload: String,
 }
 
 pub fn deform(tuple: &Tuple) -> Result<Row, TupleError> {

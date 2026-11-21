@@ -82,6 +82,11 @@ impl StorageManager {
         Self::with_segment_size(dir, RELSEG_SIZE)
     }
 
+    /// Number of blocks in `fork`. Postgres's `smgrnblocks`.
+    pub fn nb_blocks(&self, fork: ForkIdentifier) -> Result<BlockCount, ForkError> {
+        Ok(self.get_fork(fork)?.nb_blocks)
+    }
+
     /// Fetch the block from the disk and store its bits into `page`.
     pub fn read(&self, block: BlockIdentifier, page: &mut Page) -> Result<(), BlockError> {
         let fork = self.get_fork(block.fork).map_err(|err| BlockError {

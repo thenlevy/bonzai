@@ -30,6 +30,12 @@ pub struct Tuple<'a> {
     columns_data: &'a [u8],
 }
 
+impl Tuple<'_> {
+    pub fn header(&self) -> &TupleHeader {
+        &self.header
+    }
+}
+
 /// Postgres's `HeapTupleHeaderData`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TupleHeader {
@@ -165,7 +171,7 @@ pub enum UnimplementedTuple {
     UnsupportedVisibility { infomask: u16 },
 }
 
-const SIZEOF_HEAP_TUPLE_HEADER: usize = 23;
+pub(crate) const SIZEOF_HEAP_TUPLE_HEADER: usize = 23;
 
 const HEAP_ONLY_TUPLE: u16 = 0x8000;
 const HEAP_HOT_UPDATED: u16 = 0x4000;
@@ -176,10 +182,10 @@ const HEAP_MOVED_IN: u16 = 0x8000;
 const HEAP_MOVED_OFF: u16 = 0x4000;
 const HEAP_UPDATED: u16 = 0x2000;
 const HEAP_XMAX_IS_MULTI: u16 = 0x1000;
-const HEAP_XMAX_INVALID: u16 = 0x0800;
+pub(crate) const HEAP_XMAX_INVALID: u16 = 0x0800;
 const HEAP_XMAX_COMMITTED: u16 = 0x0400;
-const HEAP_XMIN_INVALID: u16 = 0x0200;
-const HEAP_XMIN_COMMITTED: u16 = 0x0100;
+pub(crate) const HEAP_XMIN_INVALID: u16 = 0x0200;
+pub(crate) const HEAP_XMIN_COMMITTED: u16 = 0x0100;
 const HEAP_XMAX_LOCK_ONLY: u16 = 0x0080;
 const HEAP_XMAX_EXCL_LOCK: u16 = 0x0040;
 const HEAP_COMBOCID: u16 = 0x0020;

@@ -3,11 +3,11 @@
 //! Pages are not cached: every new reader requires fetching the page from the
 //! disk. This will be addressed in future versions.
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::Deref};
 
 use super::{
-    BLCKSZ_BYTES,
-    manager::{BlockError, BlockIdentifier, StorageManager},
+    BLCKSZ_BYTES, BlockCount,
+    manager::{BlockError, BlockIdentifier, ForkError, ForkIdentifier, StorageManager},
     page::{Page, PageValidationError},
 };
 
@@ -50,6 +50,26 @@ impl BufferManager {
             block,
             _manager: PhantomData,
         })
+    }
+
+    /// Number of blocks in `fork`. Postgres's `RelationGetNumberOfBlocks`.
+    pub fn nb_blocks(&self, fork: ForkIdentifier) -> Result<BlockCount, ForkError> {
+        self.smgr.nb_blocks(fork)
+    }
+}
+
+impl PageGuard<'_> {
+    /// The block the page was read from.
+    pub fn block(&self) -> BlockIdentifier {
+        self.block
+    }
+}
+
+impl Deref for PageGuard<'_> {
+    type Target = Page;
+
+    fn deref(&self) -> &Page {
+        &self.page
     }
 }
 

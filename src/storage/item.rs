@@ -103,6 +103,7 @@ impl From<u32> for LinePointer {
     }
 }
 
+#[derive(Debug)]
 pub struct InvalidItemError {
     pub offset: LocationIndex,
     pub len: u16,
