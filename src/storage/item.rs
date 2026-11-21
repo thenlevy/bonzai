@@ -26,7 +26,6 @@ pub struct Tid {
     pub offset: OffsetNumber,
 }
 
-/// Size of a TID on disk. Postgres's `sizeof(ItemPointerData)`.
 pub const TID_SIZE_BYTES: usize = 6;
 
 impl Tid {
@@ -107,8 +106,8 @@ impl From<u32> for LinePointer {
 pub struct InvalidItemError {
     pub offset: LocationIndex,
     pub len: u16,
-    pub page_pd_lower: LocationIndex,
     pub page_pd_upper: LocationIndex,
+    pub page_pd_special: LocationIndex,
 }
 
 impl Page {
@@ -148,22 +147,24 @@ impl Page {
 impl PageWithValidatedHeader<'_> {
     pub fn item(&self, offset: LocationIndex, len: u16) -> Result<Item<'_>, InvalidItemError> {
         let header = self.header();
-        if offset.0 < header.lower.0 || offset.0 + len > header.upper.0 {
+        // Tuples live between `pd_upper` and `pd_special`.
+        let end = usize::from(offset.0) + usize::from(len);
+        if offset.0 < header.upper.0 || end > usize::from(header.special.0) {
             return Err(InvalidItemError {
                 offset,
                 len,
-                page_pd_lower: header.lower,
                 page_pd_upper: header.upper,
+                page_pd_special: header.special,
             });
         }
         Ok(Item(
             self.page
-                .get(usize::from(offset.0)..usize::from(offset.0 + len))
+                .get(usize::from(offset.0)..end)
                 .ok_or(InvalidItemError {
                     offset,
                     len,
-                    page_pd_lower: header.lower,
                     page_pd_upper: header.upper,
+                    page_pd_special: header.special,
                 })?,
         ))
     }

@@ -3,6 +3,7 @@
 
 use std::num::{NonZeroU32, NonZeroU64};
 
+pub mod heap;
 pub mod storage;
 
 /// A position (in bytes) in the write-ahead log, also called an LSN (Log Sequence Number).

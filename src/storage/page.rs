@@ -82,7 +82,7 @@ pub const PAGE_LAYOUT_VERSION: u16 = 4;
 pub(crate) const PD_CHECKSUM: Range<usize> = 8..10;
 
 /// Maximum alignment a basic C type may require, in bytes. Postgres's `MAXIMUM_ALIGNOF`.
-const MAXIMUM_ALIGNOF_BYTES: usize = 8;
+pub const MAXIMUM_ALIGNOF_BYTES: usize = 8;
 
 /// Offset of a byte within a page. Postgres's `LocationIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
