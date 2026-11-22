@@ -216,7 +216,7 @@ mod tests {
     }
 
     /// What a line pointer of a hand-built page holds.
-    enum Slot<'a> {
+    enum LinePointerSpec<'a> {
         Tuple(&'a [u8]),
         Unused,
         Dead,
@@ -225,26 +225,26 @@ mod tests {
         Raw(u32),
     }
 
-    /// A heap page holding `slots`, with its checksum set for `block_number`.
-    fn page(block_number: u32, slots: &[Slot]) -> Page {
+    /// A heap page made of `line_pointers`, with its checksum set for `block_number`.
+    fn page(block_number: u32, line_pointers: &[LinePointerSpec]) -> Page {
         let mut page = Page {
             bytes: [0; BLCKSZ_BYTES],
         };
         Page::init(&mut page, 0);
         let mut header = page.header().unwrap();
-        for slot in slots {
-            let raw = match *slot {
-                Slot::Tuple(tuple) => {
+        for line_pointer in line_pointers {
+            let raw = match *line_pointer {
+                LinePointerSpec::Tuple(tuple) => {
                     let start = usize::from(header.upper.0)
                         - tuple.len().next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
                     page[start..start + tuple.len()].copy_from_slice(tuple);
                     header.upper = PageOffset(start as u16);
                     start as u32 | (1 << 15) | ((tuple.len() as u32) << 17)
                 }
-                Slot::Unused => 0,
-                Slot::Dead => 3 << 15,
-                Slot::Redirect(target) => u32::from(target) | (2 << 15),
-                Slot::Raw(raw) => raw,
+                LinePointerSpec::Unused => 0,
+                LinePointerSpec::Dead => 3 << 15,
+                LinePointerSpec::Redirect(target) => u32::from(target) | (2 << 15),
+                LinePointerSpec::Raw(raw) => raw,
             };
             let lower = usize::from(header.lower.0);
             page[lower..lower + LINE_POINTER_SIZE_BYTES].copy_from_slice(&raw.to_le_bytes());
@@ -273,12 +273,18 @@ mod tests {
     #[test]
     fn rows_come_in_tid_order_across_pages() {
         let pages = [
-            page(0, &[Slot::Tuple(&live(1)), Slot::Tuple(&live(2))]),
+            page(
+                0,
+                &[
+                    LinePointerSpec::Tuple(&live(1)),
+                    LinePointerSpec::Tuple(&live(2)),
+                ],
+            ),
             // Extending a relation leaves new pages all zeros until used.
             Page {
                 bytes: [0; BLCKSZ_BYTES],
             },
-            page(2, &[Slot::Tuple(&live(3))]),
+            page(2, &[LinePointerSpec::Tuple(&live(3))]),
         ];
         assert_eq!(
             rows(&pages),
@@ -297,15 +303,15 @@ mod tests {
 
     #[test]
     fn line_pointers_without_a_tuple_are_skipped() {
-        let slots = [
-            Slot::Tuple(&live(1)),
-            Slot::Unused,
-            Slot::Dead,
-            Slot::Redirect(5),
-            Slot::Tuple(&live(5)),
+        let line_pointers = [
+            LinePointerSpec::Tuple(&live(1)),
+            LinePointerSpec::Unused,
+            LinePointerSpec::Dead,
+            LinePointerSpec::Redirect(5),
+            LinePointerSpec::Tuple(&live(5)),
         ];
         assert_eq!(
-            rows(&[page(0, &slots)]),
+            rows(&[page(0, &line_pointers)]),
             [(tid(0, 1), row(1)), (tid(0, 5), row(5))]
         );
     }
@@ -321,12 +327,12 @@ mod tests {
             HEAP_XMIN_COMMITTED,
         ] {
             let bad = tuple(infomask, 2);
-            let slots = [
-                Slot::Tuple(&live(1)),
-                Slot::Tuple(&bad),
-                Slot::Tuple(&live(3)),
+            let line_pointers = [
+                LinePointerSpec::Tuple(&live(1)),
+                LinePointerSpec::Tuple(&bad),
+                LinePointerSpec::Tuple(&live(3)),
             ];
-            let results = scan(&[page(0, &slots)]);
+            let results = scan(&[page(0, &line_pointers)]);
             assert_eq!(results.len(), 2, "the scan stops at the error");
             let Err(ScanError::Tuple {
                 tid: bad_tid,
@@ -344,7 +350,7 @@ mod tests {
         // Frozen: committed so long ago that every transaction sees it.
         let frozen = tuple(LIVE | HEAP_XMIN_INVALID, 1);
         assert_eq!(
-            rows(&[page(0, &[Slot::Tuple(&frozen)])]),
+            rows(&[page(0, &[LinePointerSpec::Tuple(&frozen)])]),
             [(tid(0, 1), row(1))]
         );
     }
@@ -353,7 +359,7 @@ mod tests {
     fn a_line_pointer_outside_the_tuples_is_an_error() {
         // A normal line pointer to 40 bytes at offset 8, in the page header.
         let raw = 8 | (1 << 15) | (40 << 17);
-        let results = scan(&[page(0, &[Slot::Raw(raw)])]);
+        let results = scan(&[page(0, &[LinePointerSpec::Raw(raw)])]);
         let [Err(ScanError::LinePointer { tid: bad_tid, .. })] = &results[..] else {
             panic!("expected a line pointer error, got {results:?}");
         };
@@ -364,8 +370,8 @@ mod tests {
     fn a_page_that_fails_its_checksum_stops_the_scan() {
         // A page sealed for block 1, stored as block 0, then a good page.
         let pages = [
-            page(1, &[Slot::Tuple(&live(1))]),
-            page(1, &[Slot::Tuple(&live(2))]),
+            page(1, &[LinePointerSpec::Tuple(&live(1))]),
+            page(1, &[LinePointerSpec::Tuple(&live(2))]),
         ];
         let results = scan(&pages);
         assert!(matches!(

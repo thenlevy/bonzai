@@ -78,17 +78,17 @@ pub enum LinePointer {
     /// can be any version of its row. Postgres's `LP_NORMAL`.
     Normal { offset: PageOffset, len: u16 },
     /// Points to another line pointer on the same page.
-    /// This TID refers to a slot that used to hold a dead tuple, whose bytes have now
-    /// been removed from the page, while its row lives on in a newer version on the same page.
+    /// This TID used to refer to a dead tuple, whose bytes have now been removed from the
+    /// page, while its row lives on in a newer version on the same page.
     /// The line pointer holds the line pointer number of the first version that survived, or
     /// `None` if that number is 0, which Postgres never writes: the page is corrupt.
     /// Postgres's `LP_REDIRECT`.
     /// See [Heap-Only Tuples](https://www.postgresql.org/docs/current/storage-hot.html).
     Redirect(Option<LinePointerNumber>),
-    /// Points to nothing. This TID refers to a slot whose tuple is dead to every transaction,
-    /// but indexes may still hold the TID, so the slot cannot be reused yet. The tuple's bytes
-    /// may still be in the page, as on B-tree pages, or already removed with a `len` of 0, as
-    /// on heap pages after pruning. Postgres's `LP_DEAD`.
+    /// Points to nothing. The tuple this TID referred to is dead to every transaction, but
+    /// indexes may still hold the TID, so the line pointer cannot be reused yet. The tuple's
+    /// bytes may still be in the page, as on B-tree pages, or already removed with a `len` of 0,
+    /// as on heap pages after pruning. Postgres's `LP_DEAD`.
     Dead { offset: PageOffset, len: u16 },
 }
 
