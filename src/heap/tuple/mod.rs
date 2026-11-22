@@ -84,7 +84,7 @@ pub struct TupleHeader {
 
 impl<'a> Item<'a> {
     pub fn try_into_heap_tuple(self) -> Result<Tuple<'a>, TupleError> {
-        let header_data: &[u8; SIZEOF_HEAP_TUPLE_HEADER] =
+        let header_data: &[u8; FIXED_HEADER_SIZE_BYTES] =
             self.0.first_chunk().ok_or(TupleError::Truncated)?;
 
         macro_rules! u16_at {
@@ -122,7 +122,7 @@ impl<'a> Item<'a> {
             0
         };
         let header_size = usize::from(header.header_size);
-        if header_size < SIZEOF_HEAP_TUPLE_HEADER + bitmap_len
+        if header_size < FIXED_HEADER_SIZE_BYTES + bitmap_len
             || header_size % MAXIMUM_ALIGNOF_BYTES != 0
         {
             return Err(TupleError::BadHeaderSize {
@@ -130,7 +130,7 @@ impl<'a> Item<'a> {
             });
         }
         let columns_data = self.0.get(header_size..).ok_or(TupleError::Truncated)?;
-        let bitmap = &self.0[SIZEOF_HEAP_TUPLE_HEADER..SIZEOF_HEAP_TUPLE_HEADER + bitmap_len];
+        let bitmap = &self.0[FIXED_HEADER_SIZE_BYTES..FIXED_HEADER_SIZE_BYTES + bitmap_len];
         Ok(Tuple {
             header,
             null_bitmap: (bitmap_len > 0).then_some(bitmap),
@@ -176,7 +176,9 @@ pub enum UnimplementedTuple {
     UnsupportedVisibility { infomask: u16 },
 }
 
-pub(crate) const SIZEOF_HEAP_TUPLE_HEADER: usize = 23;
+/// Size of the fixed part of a tuple header, which the null bitmap follows. Postgres's
+/// `SizeofHeapTupleHeader`.
+pub(crate) const FIXED_HEADER_SIZE_BYTES: usize = 23;
 
 const HEAP_ONLY_TUPLE: u16 = 0x8000;
 const HEAP_HOT_UPDATED: u16 = 0x4000;

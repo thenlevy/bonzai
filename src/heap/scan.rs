@@ -155,7 +155,7 @@ mod tests {
 
     use crate::{
         heap::tuple::{
-            HEAP_XMAX_INVALID, HEAP_XMIN_COMMITTED, HEAP_XMIN_INVALID, SIZEOF_HEAP_TUPLE_HEADER,
+            FIXED_HEADER_SIZE_BYTES, HEAP_XMAX_INVALID, HEAP_XMIN_COMMITTED, HEAP_XMIN_INVALID,
         },
         storage::{
             BLCKSZ_BYTES,
@@ -195,11 +195,11 @@ mod tests {
     /// The tuple of `row(id)`, inserted by transaction 100, with `infomask`.
     fn tuple(infomask: u16, id: i64) -> Vec<u8> {
         let row = row(id);
-        let mut bytes = vec![0; SIZEOF_HEAP_TUPLE_HEADER];
+        let mut bytes = vec![0; FIXED_HEADER_SIZE_BYTES];
         bytes[0..4].copy_from_slice(&100u32.to_le_bytes());
         bytes[18..20].copy_from_slice(&3u16.to_le_bytes());
         bytes[20..22].copy_from_slice(&infomask.to_le_bytes());
-        let header_size = SIZEOF_HEAP_TUPLE_HEADER.next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
+        let header_size = FIXED_HEADER_SIZE_BYTES.next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
         bytes.resize(header_size, 0);
         bytes[22] = header_size as u8;
         bytes.extend(row.id.to_le_bytes());
