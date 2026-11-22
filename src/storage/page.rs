@@ -19,14 +19,14 @@ use std::{
 };
 
 use {
-    super::{BLCKSZ, BlockNumber, checksum::checksum_page},
+    super::{BLCKSZ_BYTES, BlockNumber, checksum::checksum_page},
     crate::{TransactionId, XLogRecPtr},
 };
 
 /// An 8 KB block, exactly as stored on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
-    pub bytes: [u8; BLCKSZ],
+    pub bytes: [u8; BLCKSZ_BYTES],
 }
 
 impl Deref for Page {
@@ -43,23 +43,36 @@ impl DerefMut for Page {
     }
 }
 
-pub struct ValidatedPage<'a> {
-    page: Cow<'a, Page>,
-    block: BlockNumber,
+/// A page along with its validated header.
+pub struct PageWithValidatedHeader<'a> {
+    pub page: &'a Page,
+    header: Header,
 }
 
-impl ValidatedPage<'_> {
+impl PageWithValidatedHeader<'_> {
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+}
+
+/// A page whose checksum has been computed for a specific block.
+pub struct SealedValidatedPage<'a> {
+    page: Cow<'a, Page>,
+    block_number: BlockNumber,
+}
+
+impl SealedValidatedPage<'_> {
     pub fn page(&self) -> &Page {
         &self.page
     }
 
-    /// The block the page's checksum was computed for.
-    pub fn block(&self) -> BlockNumber {
-        self.block
+    /// The number of the block the page's checksum was computed for.
+    pub fn block_number(&self) -> BlockNumber {
+        self.block_number
     }
 }
 
-pub const HEADER_SIZE: usize = 24;
+pub const HEADER_SIZE_BYTES: usize = 24;
 
 /// Version of this layout, kept in the low byte of `pd_pagesize_version`.
 /// Postgres's `PG_PAGE_LAYOUT_VERSION`, which has been 4 since Postgres 8.3.
@@ -68,16 +81,16 @@ pub const PAGE_LAYOUT_VERSION: u16 = 4;
 /// Where `pd_checksum` sits in the page.
 pub(crate) const PD_CHECKSUM: Range<usize> = 8..10;
 
-/// Postgres's `MAXIMUM_ALIGNOF`: This is the maximum alignment a basic C type may require.
-const MAXIMUM_ALIGNOF: usize = 8;
+/// Maximum alignment a basic C type may require, in bytes. Postgres's `MAXIMUM_ALIGNOF`.
+pub const MAXIMUM_ALIGNOF_BYTES: usize = 8;
 
 /// Offset of a byte within a page. Postgres's `LocationIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct LocationIndex(pub u16);
+pub struct PageOffset(pub u16);
 
-impl From<LocationIndex> for usize {
-    fn from(location: LocationIndex) -> Self {
-        usize::from(location.0)
+impl From<PageOffset> for usize {
+    fn from(offset: PageOffset) -> Self {
+        usize::from(offset.0)
     }
 }
 
@@ -90,12 +103,12 @@ pub struct Header {
     pub checksum: u16,
     pub flags: PageFlags,
     /// Offset of the start of free space, just past the last line pointer.
-    pub lower: LocationIndex,
+    pub lower: PageOffset,
     /// Offset of the end of free space, where tuple data begins.
-    pub upper: LocationIndex,
+    pub upper: PageOffset,
     /// Offset of the start of the special space, which the access method reserves.
     /// See [Database Page Layout](https://www.postgresql.org/docs/current/storage-page-layout.html).
-    pub special: LocationIndex,
+    pub special: PageOffset,
     /// Page size in the high bits, layout version in the low byte.
     pub pagesize_version: u16,
     /// Oldest transaction whose deletions on this page could be pruned, or `None` (stored as 0)
@@ -111,29 +124,34 @@ impl Page {
         Header::try_from_raw(self.header_raw())
     }
 
+    pub fn with_validated_header(&self) -> Result<PageWithValidatedHeader<'_>, InvalidHeader> {
+        let header = self.header()?;
+        Ok(PageWithValidatedHeader { page: self, header })
+    }
+
     /// The bytes of the page's header.
-    pub fn header_raw(&self) -> &[u8; HEADER_SIZE] {
+    pub fn header_raw(&self) -> &[u8; HEADER_SIZE_BYTES] {
         self.bytes.first_chunk().unwrap()
     }
 
     /// Turns self into an empty page with at least `special_size` bytes of special space
     /// at the end. Postgres's `PageInit`.
     pub fn init(page: &mut Page, special_size: usize) {
-        let special_size = special_size.next_multiple_of(MAXIMUM_ALIGNOF);
+        let special_size = special_size.next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
         assert!(
-            HEADER_SIZE + special_size <= BLCKSZ,
+            HEADER_SIZE_BYTES + special_size <= BLCKSZ_BYTES,
             "special space too large"
         );
-        let special = LocationIndex((BLCKSZ - special_size) as u16);
+        let special = PageOffset((BLCKSZ_BYTES - special_size) as u16);
         page.fill(0);
         page.set_header(Header {
             lsn: None,
             checksum: 0,
             flags: PageFlags::default(),
-            lower: LocationIndex(HEADER_SIZE as u16),
+            lower: PageOffset(HEADER_SIZE_BYTES as u16),
             upper: special,
             special,
-            pagesize_version: BLCKSZ as u16 | PAGE_LAYOUT_VERSION,
+            pagesize_version: BLCKSZ_BYTES as u16 | PAGE_LAYOUT_VERSION,
             prune_xid: None,
         });
     }
@@ -156,67 +174,67 @@ impl Page {
         write_u32(self, 20, header.prune_xid.map_or(0, u32::from));
     }
 
-    /// Set the checksum for self at `block`, and locks self into a validated state.
+    /// Set the checksum for self at `block_number`, and locks self into a validated state.
     pub fn try_set_checksum_for_block(
         mut self,
-        block: BlockNumber,
-    ) -> Result<ValidatedPage<'static>, PageError> {
+        block_number: BlockNumber,
+    ) -> Result<SealedValidatedPage<'static>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
-                Ok(ValidatedPage {
+                Ok(SealedValidatedPage {
                     page: Cow::Owned(self),
-                    block,
+                    block_number,
                 })
             } else {
-                Err(PageError::InvalidHeader { block })
+                Err(PageValidationError::InvalidHeader { block_number })
             };
         }
 
         if self.header().is_err() {
-            return Err(PageError::InvalidHeader { block });
+            return Err(PageValidationError::InvalidHeader { block_number });
         }
 
-        let checksum = checksum_page(&self, block);
+        let checksum = checksum_page(&self, block_number);
         self[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
-        Ok(ValidatedPage {
+        Ok(SealedValidatedPage {
             page: Cow::Owned(self),
-            block,
+            block_number,
         })
     }
 
-    /// Try to validate self for `block`. Returns an error if the checksum doesn't match or the
+    /// Try to validate self for `block_number`. Returns an error if the checksum doesn't match or the
     /// header is invalid.
     pub fn try_validated_for_block<'a>(
         &'a self,
-        block: BlockNumber,
-    ) -> Result<ValidatedPage<'a>, PageError> {
+        block_number: BlockNumber,
+    ) -> Result<SealedValidatedPage<'a>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
-                Ok(ValidatedPage {
+                Ok(SealedValidatedPage {
                     page: Cow::Borrowed(self),
-                    block,
+                    block_number,
                 })
             } else {
-                Err(PageError::InvalidHeader { block })
+                Err(PageValidationError::InvalidHeader { block_number })
             };
         }
         // Read on its own, so that a checksum mismatch is reported even when
         // `header()` rejects the header.
         let stored = read_u16(self, PD_CHECKSUM.start);
-        let computed = checksum_page(self, block);
+        let computed = checksum_page(self, block_number);
         if stored != computed {
-            return Err(PageError::ChecksumMismatch {
-                block,
+            return Err(PageValidationError::ChecksumMismatch {
+                block_number,
                 stored,
                 computed,
             });
         }
         if self.header().is_err() {
-            return Err(PageError::InvalidHeader { block });
+            return Err(PageValidationError::InvalidHeader { block_number });
         }
-        Ok(ValidatedPage {
+        Ok(SealedValidatedPage {
             page: Cow::Borrowed(self),
-            block,
+            block_number,
         })
     }
 }
@@ -224,16 +242,16 @@ impl Page {
 impl Header {
     /// Parses a header, with the checks Postgres runs before letting a page
     /// into the buffer pool. They don't prove the header right, only plausible.
-    pub fn try_from_raw(raw: &[u8; HEADER_SIZE]) -> Result<Self, InvalidHeader> {
+    pub fn try_from_raw(raw: &[u8; HEADER_SIZE_BYTES]) -> Result<Self, InvalidHeader> {
         // Postgres stores the LSN as two 32-bit halves, high half first.
         let lsn = (u64::from(read_u32(raw, 0)) << 32) | u64::from(read_u32(raw, 4));
         let header = Header {
             lsn: XLogRecPtr::from_raw(lsn),
             checksum: read_u16(raw, 8),
             flags: PageFlags::try_from(read_u16(raw, 10))?,
-            lower: LocationIndex(read_u16(raw, 12)),
-            upper: LocationIndex(read_u16(raw, 14)),
-            special: LocationIndex(read_u16(raw, 16)),
+            lower: PageOffset(read_u16(raw, 12)),
+            upper: PageOffset(read_u16(raw, 14)),
+            special: PageOffset(read_u16(raw, 16)),
             pagesize_version: read_u16(raw, 18),
             prune_xid: TransactionId::from_raw(read_u32(raw, 20)),
         };
@@ -245,8 +263,8 @@ impl Header {
         } = header;
         if !(lower <= upper
             && upper <= special
-            && usize::from(special) <= BLCKSZ
-            && usize::from(special) % MAXIMUM_ALIGNOF == 0)
+            && usize::from(special) <= BLCKSZ_BYTES
+            && usize::from(special) % MAXIMUM_ALIGNOF_BYTES == 0)
         {
             return Err(InvalidHeader::Offsets {
                 lower,
@@ -267,9 +285,12 @@ pub enum InvalidHeader {
     /// `pd_lower`, `pd_upper` and `pd_special` are out of order or off the
     /// page, or `pd_special` isn't aligned.
     Offsets {
-        lower: LocationIndex,
-        upper: LocationIndex,
-        special: LocationIndex,
+        lower: PageOffset,
+        upper: PageOffset,
+        special: PageOffset,
+    },
+    PdLowerTooSmall {
+        lower: PageOffset,
     },
 }
 
@@ -286,6 +307,9 @@ impl fmt::Display for InvalidHeader {
                 "invalid page offsets: lower {}, upper {}, special {}",
                 lower.0, upper.0, special.0
             ),
+            InvalidHeader::PdLowerTooSmall { lower } => {
+                write!(f, "pd_lower points into the header: {}", lower.0)
+            }
         }
     }
 }
@@ -293,35 +317,37 @@ impl fmt::Display for InvalidHeader {
 impl std::error::Error for InvalidHeader {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PageError {
+pub enum PageValidationError {
     ChecksumMismatch {
-        block: BlockNumber,
+        block_number: BlockNumber,
         stored: u16,
         computed: u16,
     },
     InvalidHeader {
-        block: BlockNumber,
+        block_number: BlockNumber,
     },
 }
 
-impl fmt::Display for PageError {
+impl fmt::Display for PageValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PageError::ChecksumMismatch {
-                block,
+            PageValidationError::ChecksumMismatch {
+                block_number,
                 stored,
                 computed,
             } => write!(
                 f,
-                "page verification failed in block {block}: \
+                "page verification failed in block {block_number}: \
                  calculated checksum {computed} but expected {stored}"
             ),
-            PageError::InvalidHeader { block } => write!(f, "invalid page header in block {block}"),
+            PageValidationError::InvalidHeader { block_number } => {
+                write!(f, "invalid page header in block {block_number}")
+            }
         }
     }
 }
 
-impl std::error::Error for PageError {}
+impl std::error::Error for PageValidationError {}
 
 /// The bits of `pd_flags`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -398,34 +424,39 @@ mod tests {
 
     /// An initialized page with some arbitrary bytes in its free space.
     fn sample_page() -> Page {
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         Page::init(&mut page, 16);
-        for (i, byte) in page[HEADER_SIZE..BLCKSZ - 16].iter_mut().enumerate() {
+        for (i, byte) in page[HEADER_SIZE_BYTES..BLCKSZ_BYTES - 16]
+            .iter_mut()
+            .enumerate()
+        {
             *byte = (i * 31 % 251) as u8;
         }
         page
     }
 
-    /// `page` with its checksum set for `block`.
-    fn sealed(page: Page, block: BlockNumber) -> Page {
-        let validated = page.try_set_checksum_for_block(block).unwrap();
+    /// `page` with its checksum set for `block_number`.
+    fn sealed(page: Page, block_number: BlockNumber) -> Page {
+        let validated = page.try_set_checksum_for_block(block_number).unwrap();
         validated.page().clone()
     }
 
     #[test]
     fn init_matches_page_init() {
         let mut page = Page {
-            bytes: [0xAB; BLCKSZ],
+            bytes: [0xAB; BLCKSZ_BYTES],
         };
         Page::init(&mut page, 12);
         let header = page.header().unwrap();
-        assert_eq!(header.lower, LocationIndex(24));
-        assert_eq!(header.upper, LocationIndex(8192 - 16));
-        assert_eq!(header.special, LocationIndex(8192 - 16));
+        assert_eq!(header.lower, PageOffset(24));
+        assert_eq!(header.upper, PageOffset(8192 - 16));
+        assert_eq!(header.special, PageOffset(8192 - 16));
         assert_eq!(header.pagesize_version, 8196);
         assert_eq!(header.lsn, None);
         assert_eq!(header.prune_xid, None);
-        assert!(page[HEADER_SIZE..].iter().all(|&byte| byte == 0));
+        assert!(page[HEADER_SIZE_BYTES..].iter().all(|&byte| byte == 0));
     }
 
     #[test]
@@ -438,13 +469,15 @@ mod tests {
                 page_full: false,
                 all_visible: true,
             },
-            lower: LocationIndex(40),
-            upper: LocationIndex(8000),
-            special: LocationIndex(8176),
+            lower: PageOffset(40),
+            upper: PageOffset(8000),
+            special: PageOffset(8176),
             pagesize_version: 8196,
             prune_xid: TransactionId::from_raw(742),
         };
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         page.set_header(header);
         assert_eq!(page.header(), Ok(header));
         // High half of the LSN first, each half little-endian.
@@ -454,7 +487,9 @@ mod tests {
     #[test]
     fn all_zero_page_verifies() {
         // `extend` adds pages of zeros, which have no checksum.
-        let page = Page { bytes: [0; BLCKSZ] };
+        let page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         assert!(page.try_validated_for_block(BlockNumber(7)).is_ok());
     }
 
@@ -462,8 +497,13 @@ mod tests {
     fn set_checksum_leaves_a_new_page_all_zeros() {
         // A checksum would make the page no longer all zeros while `upper`
         // is still 0, and `verify` would reject it as an invalid header.
-        let page = sealed(Page { bytes: [0; BLCKSZ] }, BlockNumber(7));
-        assert_eq!(page.bytes, [0; BLCKSZ]);
+        let page = sealed(
+            Page {
+                bytes: [0; BLCKSZ_BYTES],
+            },
+            BlockNumber(7),
+        );
+        assert_eq!(page.bytes, [0; BLCKSZ_BYTES]);
     }
 
     #[test]
@@ -476,7 +516,7 @@ mod tests {
     #[test]
     fn every_flipped_byte_is_caught() {
         let page = sealed(sample_page(), BlockNumber(0));
-        for i in 0..BLCKSZ {
+        for i in 0..BLCKSZ_BYTES {
             let mut corrupt = page.clone();
             corrupt[i] ^= 0xFF;
             assert!(
@@ -489,10 +529,10 @@ mod tests {
     #[test]
     fn page_at_the_wrong_block_is_caught() {
         let page = sealed(sample_page(), BlockNumber(5));
-        for block in (0..1000u32).filter(|&block| block != 5) {
+        for block_number in (0..1000u32).filter(|&block_number| block_number != 5) {
             assert!(matches!(
-                page.try_validated_for_block(BlockNumber(block)),
-                Err(PageError::ChecksumMismatch { .. })
+                page.try_validated_for_block(BlockNumber(block_number)),
+                Err(PageValidationError::ChecksumMismatch { .. })
             ));
         }
     }
@@ -501,7 +541,7 @@ mod tests {
     fn insane_header_is_caught_even_with_a_good_checksum() {
         let mut page = sample_page();
         let mut header = page.header().unwrap();
-        header.lower = LocationIndex(header.upper.0 + 8);
+        header.lower = PageOffset(header.upper.0 + 8);
         page.set_header(header);
         assert!(matches!(page.header(), Err(InvalidHeader::Offsets { .. })));
         // Sealing refuses such a page, so write its checksum directly.
@@ -509,8 +549,8 @@ mod tests {
         page[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
-            Err(PageError::InvalidHeader {
-                block: BlockNumber(0)
+            Err(PageValidationError::InvalidHeader {
+                block_number: BlockNumber(0)
             })
         ));
     }
@@ -525,8 +565,8 @@ mod tests {
         page[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
-            Err(PageError::InvalidHeader {
-                block: BlockNumber(0)
+            Err(PageValidationError::InvalidHeader {
+                block_number: BlockNumber(0)
             })
         ));
     }
@@ -535,24 +575,26 @@ mod tests {
     fn sealing_an_insane_header_fails() {
         let mut page = sample_page();
         let mut header = page.header().unwrap();
-        header.lower = LocationIndex(header.upper.0 + 8);
+        header.lower = PageOffset(header.upper.0 + 8);
         page.set_header(header);
         assert_eq!(
             page.try_set_checksum_for_block(BlockNumber(0)).err(),
-            Some(PageError::InvalidHeader {
-                block: BlockNumber(0)
+            Some(PageValidationError::InvalidHeader {
+                block_number: BlockNumber(0)
             })
         );
     }
 
     #[test]
     fn zero_upper_with_data_is_not_a_new_page() {
-        let mut page = Page { bytes: [0; BLCKSZ] };
+        let mut page = Page {
+            bytes: [0; BLCKSZ_BYTES],
+        };
         page[100] = 1;
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
-            Err(PageError::InvalidHeader {
-                block: BlockNumber(0)
+            Err(PageValidationError::InvalidHeader {
+                block_number: BlockNumber(0)
             })
         ));
     }

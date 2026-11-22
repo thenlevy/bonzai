@@ -48,10 +48,12 @@ initdb_args=(
 initdb "${initdb_args[@]}" >/dev/null
 
 # Reachable only through a socket in postgres/, so it never clashes with
-# another server.
+# another server. Without autovacuum, so the pages stay as the scripts left
+# them.
 cat >>"$data/postgresql.conf" <<EOF
 listen_addresses = ''
 unix_socket_directories = '$dir'
+autovacuum = off
 EOF
 
 start=(

@@ -4,12 +4,14 @@
 
 use std::fmt;
 
+pub mod buffer;
 pub mod checksum;
-pub mod page;
+pub mod item;
 pub mod manager;
+pub mod page;
 
-/// Size of a page, and of every block in a relation file. Postgres's `BLCKSZ`.
-pub const BLCKSZ: usize = 8192;
+/// Size of a page, and of every block in a relation file, in bytes. Postgres's `BLCKSZ`.
+pub const BLCKSZ_BYTES: usize = 8192;
 
 /// Position of a block within one fork of a relation, counting from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -26,7 +28,7 @@ impl fmt::Display for BlockNumber {
 pub struct BlockCount(pub u32);
 
 impl BlockCount {
-    pub fn contains(self, block: BlockNumber) -> bool {
-        block.0 < self.0
+    pub fn contains(self, block_number: BlockNumber) -> bool {
+        block_number.0 < self.0
     }
 }
