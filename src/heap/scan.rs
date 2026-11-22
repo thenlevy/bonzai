@@ -19,7 +19,7 @@ use crate::{
 pub struct SeqScan<'a> {
     buffers: &'a BufferManager,
     fork: ForkIdentifier,
-    nb_blocks: BlockCount,
+    block_count: BlockCount,
     /// The next block to read.
     next_block: BlockNumber,
     /// The page being scanned, and the next line pointer to look at.
@@ -54,11 +54,11 @@ impl<'a> SeqScan<'a> {
             rel,
             kind: ForkKind::Main,
         };
-        let nb_blocks = buffers.nb_blocks(fork).map_err(ScanError::Fork)?;
+        let block_count = buffers.block_count(fork).map_err(ScanError::Fork)?;
         Ok(SeqScan {
             buffers,
             fork,
-            nb_blocks,
+            block_count,
             next_block: BlockNumber(0),
             current: None,
             done: false,
@@ -68,7 +68,7 @@ impl<'a> SeqScan<'a> {
     fn next_row(&mut self) -> Result<Option<(Tid, Row)>, ScanError> {
         loop {
             let Some((page, next)) = &mut self.current else {
-                if !self.nb_blocks.contains(self.next_block) {
+                if !self.block_count.contains(self.next_block) {
                     return Ok(None);
                 }
                 let block = BlockIdentifier {

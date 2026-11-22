@@ -100,8 +100,8 @@ fn line_pointers_and_tuple_headers_read_like_pageinspect() {
         rel,
         kind: ForkKind::Main,
     };
-    let nb_blocks = buffers.nb_blocks(fork).unwrap();
-    let items: Vec<_> = (0..nb_blocks.0)
+    let block_count = buffers.block_count(fork).unwrap();
+    let items: Vec<_> = (0..block_count.0)
         .flat_map(|block_number| {
             let block = BlockIdentifier {
                 fork,

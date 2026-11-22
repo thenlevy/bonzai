@@ -53,8 +53,8 @@ impl BufferManager {
     }
 
     /// Number of blocks in `fork`. Postgres's `RelationGetNumberOfBlocks`.
-    pub fn nb_blocks(&self, fork: ForkIdentifier) -> Result<BlockCount, ForkError> {
-        self.smgr.nb_blocks(fork)
+    pub fn block_count(&self, fork: ForkIdentifier) -> Result<BlockCount, ForkError> {
+        self.smgr.block_count(fork)
     }
 }
 

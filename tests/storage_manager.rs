@@ -36,7 +36,7 @@ fn every_fork_of_the_fixture_database_reads_back() {
             !path.with_extension("1").exists(),
             "{path:?} has a second segment"
         );
-        let nb_blocks = (file.len() / BLCKSZ_BYTES) as u32;
+        let block_count = (file.len() / BLCKSZ_BYTES) as u32;
         for (n, expected) in (0..).zip(file.chunks_exact(BLCKSZ_BYTES)) {
             let page = read(&smgr, fork, n).unwrap();
             assert!(page.bytes == expected, "{path:?}: block {n} differs");
@@ -45,7 +45,7 @@ fn every_fork_of_the_fixture_database_reads_back() {
             }
         }
         assert!(
-            is_past_the_end(&read(&smgr, fork, nb_blocks), nb_blocks),
+            is_past_the_end(&read(&smgr, fork, block_count), block_count),
             "{path:?}"
         );
         forks += 1;

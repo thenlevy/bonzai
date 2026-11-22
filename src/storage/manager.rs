@@ -83,8 +83,8 @@ impl StorageManager {
     }
 
     /// Number of blocks in `fork`. Postgres's `smgrnblocks`.
-    pub fn nb_blocks(&self, fork: ForkIdentifier) -> Result<BlockCount, ForkError> {
-        Ok(self.get_fork(fork)?.nb_blocks)
+    pub fn block_count(&self, fork: ForkIdentifier) -> Result<BlockCount, ForkError> {
+        Ok(self.get_fork(fork)?.block_count)
     }
 
     /// Fetch the block from the disk and store its bits into `page`.
@@ -93,11 +93,11 @@ impl StorageManager {
             block,
             inner: BlockErrorInner::ForkError(err),
         })?;
-        if !fork.nb_blocks.contains(block.block_number) {
+        if !fork.block_count.contains(block.block_number) {
             return Err(BlockError {
                 block,
                 inner: BlockErrorInner::BlockDoesNotExist {
-                    fork_size: fork.nb_blocks,
+                    fork_size: fork.block_count,
                 },
             });
         }
@@ -144,7 +144,7 @@ impl StorageManager {
     fn load_fork(&self, fork: ForkIdentifier) -> Result<OpenFork, ForkError> {
         let empty = OpenFork {
             segments: Vec::new(),
-            nb_blocks: BlockCount(0),
+            block_count: BlockCount(0),
         };
         let mut previous_full = true;
         (0..)
@@ -157,13 +157,13 @@ impl StorageManager {
                 let segment = self.open_segment(fork, segno).transpose()?;
                 previous_full = segment
                     .as_ref()
-                    .is_ok_and(|segment| segment.nb_blocks == self.n_block_per_segment);
+                    .is_ok_and(|segment| segment.block_count == self.n_block_per_segment);
                 Some(segment)
             })
             .try_fold(empty, |mut open, segment| {
                 let segment = segment?;
                 open.segments.push(segment.file);
-                open.nb_blocks.0 += segment.nb_blocks.0;
+                open.block_count.0 += segment.block_count.0;
                 Ok(open)
             })
     }
@@ -205,7 +205,7 @@ impl StorageManager {
         }
         Ok(Some(Segment {
             file,
-            nb_blocks: BlockCount(blocks as u32),
+            block_count: BlockCount(blocks as u32),
         }))
     }
 
@@ -246,13 +246,13 @@ pub const RELSEG_SIZE: BlockCount = BlockCount(1024 * 1024 * 1024 / (BLCKSZ_BYTE
 /// A fork whose segment files are open.
 struct OpenFork {
     segments: Vec<File>,
-    nb_blocks: BlockCount,
+    block_count: BlockCount,
 }
 
 /// One open segment file of a fork.
 struct Segment {
     file: File,
-    nb_blocks: BlockCount,
+    block_count: BlockCount,
 }
 
 struct Position {
@@ -298,8 +298,8 @@ mod tests {
         StorageManager::with_segment_size(dir, BlockCount(2)).unwrap()
     }
 
-    fn nb_blocks(smgr: &StorageManager) -> BlockCount {
-        smgr.get_fork(MAIN).unwrap().nb_blocks
+    fn block_count(smgr: &StorageManager) -> BlockCount {
+        smgr.get_fork(MAIN).unwrap().block_count
     }
 
     fn read(smgr: &StorageManager, block_number: u32) -> Result<Page, BlockError> {
@@ -328,7 +328,7 @@ mod tests {
         write_blocks(dir.path(), "16384.1", 2, 2);
         write_blocks(dir.path(), "16384.2", 4, 1);
         let smgr = open_with_small_segments(dir.path());
-        assert_eq!(nb_blocks(&smgr), BlockCount(5));
+        assert_eq!(block_count(&smgr), BlockCount(5));
         for block_number in 0..5 {
             let page = read(&smgr, block_number).unwrap();
             assert!(
@@ -345,7 +345,7 @@ mod tests {
         write_blocks(dir.path(), "16384", 0, 2);
         write_blocks(dir.path(), "16384.1", 2, 2);
         let smgr = open_with_small_segments(dir.path());
-        assert_eq!(nb_blocks(&smgr), BlockCount(4));
+        assert_eq!(block_count(&smgr), BlockCount(4));
         assert!(is_past_the_end(&read(&smgr, 4), 4));
     }
 
@@ -354,7 +354,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("16384"), []).unwrap();
         let smgr = open_with_small_segments(dir.path());
-        assert_eq!(nb_blocks(&smgr), BlockCount(0));
+        assert_eq!(block_count(&smgr), BlockCount(0));
         assert!(is_past_the_end(&read(&smgr, 0), 0));
     }
 
@@ -366,7 +366,7 @@ mod tests {
         write_blocks(dir.path(), "16384", 0, 1);
         write_blocks(dir.path(), "16384.1", 9, 2);
         let smgr = open_with_small_segments(dir.path());
-        assert_eq!(nb_blocks(&smgr), BlockCount(1));
+        assert_eq!(block_count(&smgr), BlockCount(1));
     }
 
     #[test]
@@ -376,7 +376,7 @@ mod tests {
         bytes.extend([1; 100]);
         fs::write(dir.path().join("16384"), bytes).unwrap();
         let smgr = StorageManager::open(dir.path()).unwrap();
-        assert_eq!(nb_blocks(&smgr), BlockCount(1));
+        assert_eq!(block_count(&smgr), BlockCount(1));
         assert!(is_past_the_end(&read(&smgr, 1), 1));
     }
 
