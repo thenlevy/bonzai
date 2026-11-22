@@ -10,7 +10,7 @@
 
 use super::{
     BlockNumber,
-    page::{HEADER_SIZE_BYTES, InvalidHeader, LocationIndex, Page, PageWithValidatedHeader},
+    page::{HEADER_SIZE_BYTES, InvalidHeader, Page, PageOffset, PageWithValidatedHeader},
 };
 
 use std::{fmt, num::NonZeroU16};
@@ -72,7 +72,7 @@ pub enum LinePointer {
     Unused,
     /// This TID refers to a tuple: `len` bytes starting at byte `offset` of the page. The tuple
     /// can be any version of its row. Postgres's `LP_NORMAL`.
-    Normal { offset: LocationIndex, len: u16 },
+    Normal { offset: PageOffset, len: u16 },
     /// Points to another line pointer on the same page.
     /// This TID refers to a slot that used to hold a dead tuple, whose bytes have now
     /// been removed from the page, while its row lives on in a newer version on the same page.
@@ -85,7 +85,7 @@ pub enum LinePointer {
     /// but indexes may still hold the TID, so the slot cannot be reused yet. The tuple's bytes
     /// may still be in the page, as on B-tree pages, or already removed with a `len` of 0, as
     /// on heap pages after pruning. Postgres's `LP_DEAD`.
-    Dead { offset: LocationIndex, len: u16 },
+    Dead { offset: PageOffset, len: u16 },
 }
 
 impl From<u32> for LinePointer {
@@ -100,12 +100,12 @@ impl From<u32> for LinePointer {
         match (raw >> 15) & 0b_11 {
             0b_00 => LinePointer::Unused,
             0b_01 => LinePointer::Normal {
-                offset: LocationIndex(lp_off),
+                offset: PageOffset(lp_off),
                 len,
             },
             0b_10 => LinePointer::Redirect(NonZeroU16::new(lp_off).map(LinePointerNumber)),
             0b_11 => LinePointer::Dead {
-                offset: LocationIndex(lp_off),
+                offset: PageOffset(lp_off),
                 len,
             },
             _ => unreachable!(),
@@ -115,10 +115,10 @@ impl From<u32> for LinePointer {
 
 #[derive(Debug)]
 pub struct InvalidItemError {
-    pub offset: LocationIndex,
+    pub offset: PageOffset,
     pub len: u16,
-    pub page_pd_upper: LocationIndex,
-    pub page_pd_special: LocationIndex,
+    pub page_pd_upper: PageOffset,
+    pub page_pd_special: PageOffset,
 }
 
 impl Page {
@@ -161,7 +161,7 @@ impl Page {
 }
 
 impl PageWithValidatedHeader<'_> {
-    pub fn item(&self, offset: LocationIndex, len: u16) -> Result<Item<'_>, InvalidItemError> {
+    pub fn item(&self, offset: PageOffset, len: u16) -> Result<Item<'_>, InvalidItemError> {
         let header = self.header();
         // Tuples live between `pd_upper` and `pd_special`.
         let end = usize::from(offset.0) + usize::from(len);

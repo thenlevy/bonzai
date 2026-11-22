@@ -86,11 +86,11 @@ pub const MAXIMUM_ALIGNOF_BYTES: usize = 8;
 
 /// Offset of a byte within a page. Postgres's `LocationIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct LocationIndex(pub u16);
+pub struct PageOffset(pub u16);
 
-impl From<LocationIndex> for usize {
-    fn from(location: LocationIndex) -> Self {
-        usize::from(location.0)
+impl From<PageOffset> for usize {
+    fn from(offset: PageOffset) -> Self {
+        usize::from(offset.0)
     }
 }
 
@@ -103,12 +103,12 @@ pub struct Header {
     pub checksum: u16,
     pub flags: PageFlags,
     /// Offset of the start of free space, just past the last line pointer.
-    pub lower: LocationIndex,
+    pub lower: PageOffset,
     /// Offset of the end of free space, where tuple data begins.
-    pub upper: LocationIndex,
+    pub upper: PageOffset,
     /// Offset of the start of the special space, which the access method reserves.
     /// See [Database Page Layout](https://www.postgresql.org/docs/current/storage-page-layout.html).
-    pub special: LocationIndex,
+    pub special: PageOffset,
     /// Page size in the high bits, layout version in the low byte.
     pub pagesize_version: u16,
     /// Oldest transaction whose deletions on this page could be pruned, or `None` (stored as 0)
@@ -142,13 +142,13 @@ impl Page {
             HEADER_SIZE_BYTES + special_size <= BLCKSZ_BYTES,
             "special space too large"
         );
-        let special = LocationIndex((BLCKSZ_BYTES - special_size) as u16);
+        let special = PageOffset((BLCKSZ_BYTES - special_size) as u16);
         page.fill(0);
         page.set_header(Header {
             lsn: None,
             checksum: 0,
             flags: PageFlags::default(),
-            lower: LocationIndex(HEADER_SIZE_BYTES as u16),
+            lower: PageOffset(HEADER_SIZE_BYTES as u16),
             upper: special,
             special,
             pagesize_version: BLCKSZ_BYTES as u16 | PAGE_LAYOUT_VERSION,
@@ -249,9 +249,9 @@ impl Header {
             lsn: XLogRecPtr::from_raw(lsn),
             checksum: read_u16(raw, 8),
             flags: PageFlags::try_from(read_u16(raw, 10))?,
-            lower: LocationIndex(read_u16(raw, 12)),
-            upper: LocationIndex(read_u16(raw, 14)),
-            special: LocationIndex(read_u16(raw, 16)),
+            lower: PageOffset(read_u16(raw, 12)),
+            upper: PageOffset(read_u16(raw, 14)),
+            special: PageOffset(read_u16(raw, 16)),
             pagesize_version: read_u16(raw, 18),
             prune_xid: TransactionId::from_raw(read_u32(raw, 20)),
         };
@@ -285,12 +285,12 @@ pub enum InvalidHeader {
     /// `pd_lower`, `pd_upper` and `pd_special` are out of order or off the
     /// page, or `pd_special` isn't aligned.
     Offsets {
-        lower: LocationIndex,
-        upper: LocationIndex,
-        special: LocationIndex,
+        lower: PageOffset,
+        upper: PageOffset,
+        special: PageOffset,
     },
     PdLowerTooSmall {
-        lower: LocationIndex,
+        lower: PageOffset,
     },
 }
 
@@ -450,9 +450,9 @@ mod tests {
         };
         Page::init(&mut page, 12);
         let header = page.header().unwrap();
-        assert_eq!(header.lower, LocationIndex(24));
-        assert_eq!(header.upper, LocationIndex(8192 - 16));
-        assert_eq!(header.special, LocationIndex(8192 - 16));
+        assert_eq!(header.lower, PageOffset(24));
+        assert_eq!(header.upper, PageOffset(8192 - 16));
+        assert_eq!(header.special, PageOffset(8192 - 16));
         assert_eq!(header.pagesize_version, 8196);
         assert_eq!(header.lsn, None);
         assert_eq!(header.prune_xid, None);
@@ -469,9 +469,9 @@ mod tests {
                 page_full: false,
                 all_visible: true,
             },
-            lower: LocationIndex(40),
-            upper: LocationIndex(8000),
-            special: LocationIndex(8176),
+            lower: PageOffset(40),
+            upper: PageOffset(8000),
+            special: PageOffset(8176),
             pagesize_version: 8196,
             prune_xid: TransactionId::from_raw(742),
         };
@@ -541,7 +541,7 @@ mod tests {
     fn insane_header_is_caught_even_with_a_good_checksum() {
         let mut page = sample_page();
         let mut header = page.header().unwrap();
-        header.lower = LocationIndex(header.upper.0 + 8);
+        header.lower = PageOffset(header.upper.0 + 8);
         page.set_header(header);
         assert!(matches!(page.header(), Err(InvalidHeader::Offsets { .. })));
         // Sealing refuses such a page, so write its checksum directly.
@@ -575,7 +575,7 @@ mod tests {
     fn sealing_an_insane_header_fails() {
         let mut page = sample_page();
         let mut header = page.header().unwrap();
-        header.lower = LocationIndex(header.upper.0 + 8);
+        header.lower = PageOffset(header.upper.0 + 8);
         page.set_header(header);
         assert_eq!(
             page.try_set_checksum_for_block(BlockNumber(0)).err(),

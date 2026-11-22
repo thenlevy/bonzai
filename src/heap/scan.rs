@@ -161,7 +161,7 @@ mod tests {
             BLCKSZ_BYTES,
             item::LINE_POINTER_SIZE_BYTES,
             manager::StorageManager,
-            page::{LocationIndex, MAXIMUM_ALIGNOF_BYTES, Page, PageValidationError},
+            page::{MAXIMUM_ALIGNOF_BYTES, Page, PageOffset, PageValidationError},
         },
     };
 
@@ -235,7 +235,7 @@ mod tests {
                     let start = usize::from(header.upper.0)
                         - tuple.len().next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
                     page[start..start + tuple.len()].copy_from_slice(tuple);
-                    header.upper = LocationIndex(start as u16);
+                    header.upper = PageOffset(start as u16);
                     start as u32 | (1 << 15) | ((tuple.len() as u32) << 17)
                 }
                 Slot::Unused => 0,
@@ -245,7 +245,7 @@ mod tests {
             };
             let lower = usize::from(header.lower.0);
             page[lower..lower + LINE_POINTER_SIZE_BYTES].copy_from_slice(&raw.to_le_bytes());
-            header.lower = LocationIndex((lower + LINE_POINTER_SIZE_BYTES) as u16);
+            header.lower = PageOffset((lower + LINE_POINTER_SIZE_BYTES) as u16);
         }
         page.set_header(header);
         let sealed = page.try_set_checksum_for_block(BlockNumber(block)).unwrap();

@@ -15,7 +15,7 @@ use bonsai::{
     storage::{
         BLCKSZ_BYTES, BlockNumber,
         checksum::checksum_page,
-        page::{Header, LocationIndex, Page, PageFlags, PageValidationError},
+        page::{Header, Page, PageFlags, PageOffset, PageValidationError},
     },
 };
 use common::{Facts, read};
@@ -42,9 +42,9 @@ static POSTGRES: LazyLock<Fixture> = LazyLock::new(|| {
             lsn: XLogRecPtr::from_raw(facts.get("lsn")),
             checksum: facts.get("checksum"),
             flags: PageFlags::try_from(facts.get::<u16>("flags")).unwrap(),
-            lower: LocationIndex(facts.get("lower")),
-            upper: LocationIndex(facts.get("upper")),
-            special: LocationIndex(facts.get("special")),
+            lower: PageOffset(facts.get("lower")),
+            upper: PageOffset(facts.get("upper")),
+            special: PageOffset(facts.get("special")),
             pagesize_version: facts.get("pagesize_version"),
             prune_xid: TransactionId::from_raw(facts.get("prune_xid")),
         },
