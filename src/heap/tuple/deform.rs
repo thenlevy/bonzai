@@ -41,7 +41,7 @@ struct Columns<'t, 'a> {
 impl<'t, 'a> Columns<'t, 'a> {
     /// Moves on to the next column and indicates whether it is NULL, or returns `None` if there are
     /// no more columns.
-    fn peek(&mut self) -> Option<bool> {
+    fn next_is_null(&mut self) -> Option<bool> {
         if self.column >= self.tuple.header.natts() as usize {
             return None;
         }
@@ -57,7 +57,7 @@ impl<'t, 'a> Columns<'t, 'a> {
 
     /// Reads the next column as a nullable int8. Fails if there are no more columns.
     fn next_int8(&mut self) -> Result<Option<i64>, TupleError> {
-        match self.peek() {
+        match self.next_is_null() {
             None => Err(TupleError::Truncated),
             Some(true) => Ok(None),
             Some(false) => {
@@ -105,7 +105,7 @@ impl<'t, 'a> Columns<'t, 'a> {
     /// no more columns, if the column's bytes don't form a valid varlena, or if they form one
     /// that bonsai doesn't support yet.
     fn next_varlena(&mut self) -> Result<Option<&[u8]>, TupleError> {
-        if self.peek().ok_or(TupleError::Truncated)? {
+        if self.next_is_null().ok_or(TupleError::Truncated)? {
             return Ok(None);
         }
 
@@ -309,10 +309,10 @@ mod tests {
         let tuple = tuple(9, Some(&[0xFF, 0x00]), &[]);
         let mut columns = columns(&tuple);
         for _ in 0..8 {
-            assert_eq!(columns.peek(), Some(false));
+            assert_eq!(columns.next_is_null(), Some(false));
         }
-        assert_eq!(columns.peek(), Some(true));
-        assert_eq!(columns.peek(), None);
+        assert_eq!(columns.next_is_null(), Some(true));
+        assert_eq!(columns.next_is_null(), None);
     }
 
     #[test]
