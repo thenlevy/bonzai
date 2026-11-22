@@ -53,7 +53,7 @@ pub struct TupleHeader {
     pub ctid: Option<Tid>,
     /// = 0b_OHK0_0nnn_nnnn_nnnn
     ///
-    /// - `O` [`Self::only_tuple`]
+    /// - `O` [`Self::heap_only`]
     /// - `H` [`Self::hot_updated`]
     /// - `K` [`Self::keys_updated`]
     /// - `0` unused
@@ -207,7 +207,7 @@ impl TupleHeader {
     /// index scans reach it by following `ctid` from the version that does
     /// have an entry. Postgres's `HEAP_ONLY_TUPLE`.
     /// See [Heap-Only Tuples](https://www.postgresql.org/docs/current/storage-hot.html).
-    pub fn only_tuple(&self) -> bool {
+    pub fn heap_only(&self) -> bool {
         (self.infomask2 & HEAP_ONLY_TUPLE) != 0
     }
 
