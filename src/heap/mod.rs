@@ -1,4 +1,4 @@
-//! Unordered tupples in a slotted page.
+//! Unordered tuples in slotted pages.
 
 pub mod scan;
 pub mod tuple;

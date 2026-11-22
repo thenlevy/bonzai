@@ -163,7 +163,7 @@ pub enum TupleError {
 pub enum UnimplementedTuple {
     /// A value moved out to TOAST.
     Toasted,
-    /// A value compressed.
+    /// A compressed value.
     Compressed,
     /// The tuple is currently unsupported by bonsai.
     Unsupported { attnum: u16 },
@@ -209,17 +209,18 @@ impl TupleHeader {
     /// An update of this tuple changed no indexed column, and the new version
     /// is on the same page.
     ///
-    /// Index scans follow `ctid` to that version and skip the index.
-    /// Postgres's `HEAP_HOT_UPDATED`.
+    /// The new version has no index entry of its own: index scans reach it by
+    /// following `ctid` from this one. Postgres's `HEAP_HOT_UPDATED`.
     /// See [Heap-Only Tuples](https://www.postgresql.org/docs/current/storage-hot.html).
     pub fn hot_updated(&self) -> bool {
         (self.infomask2 & HEAP_HOT_UPDATED) != 0
     }
 
-    /// `xmax` updated an indexed column, deleted the tuple, or took a
-    /// `FOR UPDATE` lock, so the index has to record it.
+    /// `xmax` deleted the tuple, updated one of its key columns, or locked it
+    /// `FOR UPDATE`.
     ///
-    /// Postgres's `HEAP_KEYS_UPDATED`.
+    /// These conflict with `FOR KEY SHARE` locks, which foreign-key checks
+    /// take. Postgres's `HEAP_KEYS_UPDATED`.
     pub fn keys_updated(&self) -> bool {
         (self.infomask2 & HEAP_KEYS_UPDATED) != 0
     }
@@ -227,8 +228,9 @@ impl TupleHeader {
     /// Number of columns stored in the tuple: the low 11 bits of
     /// [`Self::infomask2`].
     ///
-    /// Columns added to the table after this row was written are absent and
-    /// read as NULL. Postgres's `HeapTupleHeaderGetNatts`.
+    /// Columns added to the table after this row was written are absent, and
+    /// read as NULL or as the default they were added with. Postgres's
+    /// `HeapTupleHeaderGetNatts`.
     pub fn natts(&self) -> u16 {
         self.infomask2 & HEAP_NATTS_MASK
     }
@@ -243,9 +245,9 @@ impl TupleHeader {
 
     /// VACUUM FULL before Postgres 9.0 moved this tuple elsewhere.
     ///
-    /// This copy is a forwarding stub, and [`Self::ctid`] points at the new
-    /// location. [`Self::cid`]'s bytes hold that VACUUM's transaction
-    /// (`t_xvac`). Postgres's `HEAP_MOVED_OFF`.
+    /// This copy is dead if that VACUUM committed. [`Self::cid`]'s bytes hold
+    /// its transaction (`t_xvac`). Kept so those pages still parse.
+    /// Postgres's `HEAP_MOVED_OFF`.
     pub fn moved_off(&self) -> bool {
         (self.infomask & HEAP_MOVED_OFF) != 0
     }
@@ -314,7 +316,7 @@ impl TupleHeader {
     }
 
     /// `cid` indexes the two command ids of one transaction that both inserted
-    /// this tuple and then deleted or locked it.
+    /// this tuple and then deleted or updated it.
     ///
     /// The two ids share this field's 4 bytes, so Postgres stores the pair in
     /// a map and keeps the index in `cid`. Postgres's `HEAP_COMBOCID`.

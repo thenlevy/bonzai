@@ -1,4 +1,4 @@
-//! Convert Heap tupple into Row.
+//! Converts a heap tuple into a [`Row`].
 //!
 //! Only one specific Row type is supported for now: (Int8, Text, Text NOT NULL).
 
@@ -31,15 +31,15 @@ pub fn deform(tuple: &Tuple) -> Result<Row, TupleError> {
 struct Columns<'t, 'a> {
     tuple: &'t Tuple<'a>,
 
-    /// Index of the last column read.
+    /// Index of the next column to read.
     column: usize,
 
-    /// Current offset in bytes, in the tupple's columns data.
+    /// Current offset in bytes, in the tuple's columns data.
     offset: usize,
 }
 
 impl<'t, 'a> Columns<'t, 'a> {
-    /// Moves on to the next column and indicate whether it is NULL, or returns `None` if there are
+    /// Moves on to the next column and indicates whether it is NULL, or returns `None` if there are
     /// no more columns.
     fn peek(&mut self) -> Option<bool> {
         if self.column >= self.tuple.header.natts() as usize {
@@ -74,7 +74,7 @@ impl<'t, 'a> Columns<'t, 'a> {
     }
 
     /// Reads the next column as a non-nullable int8. Fails if there are no more columns, or
-    /// or if the next column is NULL.
+    /// if the next column is NULL.
     fn next_int8_not_null(&mut self) -> Result<i64, TupleError> {
         self.next_int8()?.ok_or(TupleError::UnexpectedNull {
             attnum: self.column as u16,
@@ -101,9 +101,9 @@ impl<'t, 'a> Columns<'t, 'a> {
         })
     }
 
-    /// Reads the next column as a variable length array of bytes. Fails if there are no more
-    /// columns, or if the byte patterns of the next column data does not match a varlena, or is
-    /// currently unsupported by bonsai.
+    /// Reads the next column as a variable-length array of bytes (a varlena). Fails if there are
+    /// no more columns, if the column's bytes don't form a valid varlena, or if they form one
+    /// that bonsai doesn't support yet.
     fn next_varlena(&mut self) -> Result<Option<&[u8]>, TupleError> {
         if self.peek().ok_or(TupleError::Truncated)? {
             return Ok(None);

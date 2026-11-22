@@ -1,7 +1,7 @@
-//! Handles line pointers and TID that refer to tuples through them.
+//! Handles line pointers, and the TIDs that refer to tuples through them.
 //!
-//! Tuples' address are expressed in offset by their line pointer's position in
-//! the array rather than by their offset in the page, so a page can move its
+//! A tuple's address is expressed by its line pointer's position in the page's
+//! array rather than by its byte offset in the page, so a page can move its
 //! tuples around (to compact free space) without changing their addresses.
 //!
 //! See [itemid.h](https://github.com/postgres/postgres/blob/master/src/include/storage/itemid.h),
@@ -15,10 +15,10 @@ use super::{
 
 use std::{fmt, num::NonZeroU16};
 
-/// A raw slot in a page.
+/// The raw bytes a line pointer points to. Postgres's `Item`.
 pub struct Item<'a>(pub &'a [u8]);
 
-/// Identifier of a tuple: a block, and the position a line pointer in the block. Postgres's
+/// Identifier of a tuple: a block, and the position of a line pointer in the block. Postgres's
 /// `ItemPointerData`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Tid {
@@ -50,7 +50,7 @@ impl fmt::Display for Tid {
 
 /// Position of a line pointer in a page's array, counting from 1.
 ///
-/// This minus one is the index in an array of line pointers.
+/// Minus one, this is the index in the page's array of line pointers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OffsetNumber(pub NonZeroU16);
 
@@ -59,30 +59,37 @@ pub const LINE_POINTER_SIZE_BYTES: usize = 4;
 
 /// A line pointer, Postgres's `ItemIdData`.
 ///
-/// This is what TID refer to. A LinePointer either:
-///  * Points to a tuple
-///  * Points to another line pointer on the same page
-///  * Points to nothing, because nothing reference the corresponding TID anymore
+/// This is what a TID refers to. A line pointer either:
+///  * points to a tuple,
+///  * points to another line pointer on the same page,
+///  * or points to nothing, because its tuple is gone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinePointer {
-    /// Nothing references the corresponding TID anymore.
+    /// Points to nothing. Nothing references the corresponding TID anymore, so the next insert
+    /// on the page can reuse it. Postgres's `LP_UNUSED`.
     Unused,
-    /// This TID refers to a used tuple.
+    /// This TID refers to a tuple: `len` bytes starting at byte `offset` of the page. The tuple
+    /// can be any version of its row. Postgres's `LP_NORMAL`.
     Normal { offset: LocationIndex, len: u16 },
-    /// Points at another line pointer on the same page.
-    /// This TID referrs to a slot that used to hold a dead tuple, whose bytes have now
-    /// been removed from the page. The LinePointer now holds the offset of the `ctid` of the tuple
-    /// that was removed. Postgres's `LP_REDIRECT`.
+    /// Points to another line pointer on the same page.
+    /// This TID refers to a slot that used to hold a dead tuple, whose bytes have now
+    /// been removed from the page, while its row lives on in a newer version on the same page.
+    /// The line pointer holds the offset number of the first version that survived, or `None`
+    /// if that number is 0, which Postgres never writes: the page is corrupt.
+    /// Postgres's `LP_REDIRECT`.
     /// See [Heap-Only Tuples](https://www.postgresql.org/docs/current/storage-hot.html).
     Redirect(Option<OffsetNumber>),
-    /// This TID refers to a slot that is not used but whose bytes are still present in the page.
+    /// Points to nothing. This TID refers to a slot whose tuple is dead to every transaction,
+    /// but indexes may still hold the TID, so the slot cannot be reused yet. The tuple's bytes
+    /// may still be in the page, as on B-tree pages, or already removed with a `len` of 0, as
+    /// on heap pages after pruning. Postgres's `LP_DEAD`.
     Dead { offset: LocationIndex, len: u16 },
 }
 
 impl From<u32> for LinePointer {
     fn from(raw: u32) -> Self {
-        // Postgres's `ItemIdData`: packs the following into 32 bits:
-        // - offset into the page (15 bits)
+        // Postgres's `ItemIdData` packs the following into 32 bits, from the lowest bits up:
+        // - an offset into the page (15 bits)
         // - a state (2 bits)
         // - a length (15 bits)
         let offset = (raw & 0b_0111_1111_1111_1111) as u16;
@@ -112,8 +119,8 @@ pub struct InvalidItemError {
 }
 
 impl Page {
-    /// The line pointer array, between the header and `pd_lower`. Empty if
-    /// `pd_lower` doesn't point past the header, as on a new, all-zero page.
+    /// The line pointer array, between the header and `pd_lower`. Empty on a
+    /// new, all-zero page.
     fn line_pointers(&self) -> Result<&[[u8; LINE_POINTER_SIZE_BYTES]], InvalidHeader> {
         if self.is_uninitialized() {
             return Ok(&[].as_chunks().0);

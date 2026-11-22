@@ -23,10 +23,10 @@ pub enum ReadError {
 
 /// A page read through the [`BufferManager`].
 ///
-/// It internally owns the copy of the page, meaning that the bytes are dropped from memory when
-/// guard is dropped. When the buffer manager caches pages, this will no longer be the case.
+/// It internally owns its copy of the page, meaning that the bytes are dropped from memory when
+/// the guard is dropped. When the buffer manager caches pages, this will no longer be the case.
 /// Instead, the pages will be owned by the buffer manager, and the guard will borrow from it.
-/// In order to prepare for this future change, we already bound the lifetime of the guard to the
+/// In order to prepare for this future change, we already bind the lifetime of the guard to the
 /// buffer manager.
 pub struct PageGuard<'a> {
     page: Box<Page>,
@@ -39,7 +39,7 @@ impl BufferManager {
         Self { smgr }
     }
 
-    /// Read `block`, and returns a guarded page after validating it.
+    /// Reads `block`, and returns a guarded page after validating it.
     pub fn validated_read(&self, block: BlockIdentifier) -> Result<PageGuard<'_>, ReadError> {
         let mut page = Box::new(Page { bytes: [0; BLCKSZ_BYTES] });
         self.smgr.read(block, &mut page).map_err(ReadError::Block)?;
