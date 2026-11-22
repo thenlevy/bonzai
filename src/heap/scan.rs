@@ -10,7 +10,7 @@ use crate::{
     storage::{
         BlockCount, BlockNumber,
         buffer::{BufferManager, PageGuard, ReadError},
-        item::{InvalidItemError, LinePointer, OffsetNumber, Tid},
+        item::{InvalidItemError, LinePointer, LinePointerNumber, Tid},
         manager::{BlockIdentifier, ForkError, ForkIdentifier, ForkKind, RelFileNumber},
         page::InvalidHeader,
     },
@@ -23,7 +23,7 @@ pub struct SeqScan<'a> {
     /// The next block to read.
     next_block: BlockNumber,
     /// The page being scanned, and the next line pointer to look at.
-    current: Option<(PageGuard<'a>, OffsetNumber)>,
+    current: Option<(PageGuard<'a>, LinePointerNumber)>,
     done: bool,
 }
 
@@ -79,27 +79,29 @@ impl<'a> SeqScan<'a> {
                     .buffers
                     .validated_read(block)
                     .map_err(ScanError::Read)?;
-                self.current = Some((page, OffsetNumber(NonZeroU16::MIN)));
+                self.current = Some((page, LinePointerNumber(NonZeroU16::MIN)));
                 self.next_block.0 += 1;
                 continue;
             };
             let block = page.block().block_number;
             let header_error = |error| ScanError::Header { block, error };
 
-            // We go to the next page if the current is empty (max_offset_number is None) or if we
-            // have read it entirely (next > max_offset_number).
-            let max_offset_number = page.max_offset_number().map_err(header_error)?;
-            if max_offset_number.is_none_or(|max| *next > max) {
+            // We go to the next page if the current is empty (max_line_pointer_number is None) or
+            // if we have read it entirely (next > max_line_pointer_number).
+            let max_line_pointer_number = page.max_line_pointer_number().map_err(header_error)?;
+            if max_line_pointer_number.is_none_or(|max| *next > max) {
                 self.current = None;
                 continue;
             }
 
             let tid = Tid {
                 block,
-                offset: *next,
+                line_pointer_number: *next,
             };
             next.0 = next.0.saturating_add(1);
-            let line_pointer = page.line_pointer(tid.offset).map_err(header_error)?;
+            let line_pointer = page
+                .line_pointer(tid.line_pointer_number)
+                .map_err(header_error)?;
 
             // A LinePointer::Redirect leads to a newer version in a HOT chain, which has a line
             // pointer of its own that the scan reaches anyway.
@@ -168,10 +170,10 @@ mod tests {
     /// Hint bits of a row inserted by a committed transaction and never deleted.
     const LIVE: u16 = HEAP_XMIN_COMMITTED | HEAP_XMAX_INVALID;
 
-    fn tid(block: u32, offset: u16) -> Tid {
+    fn tid(block: u32, line_pointer_number: u16) -> Tid {
         Tid {
             block: BlockNumber(block),
-            offset: OffsetNumber(NonZeroU16::new(offset).unwrap()),
+            line_pointer_number: LinePointerNumber(NonZeroU16::new(line_pointer_number).unwrap()),
         }
     }
 

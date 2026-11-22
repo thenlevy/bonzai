@@ -16,7 +16,7 @@ use bonsai::{
     storage::{
         BlockNumber,
         buffer::BufferManager,
-        item::{LinePointer, OffsetNumber, Tid},
+        item::{LinePointer, LinePointerNumber, Tid},
         manager::{BlockIdentifier, ForkIdentifier, ForkKind, RelFileNumber, StorageManager},
         page::Page,
     },
@@ -108,11 +108,12 @@ fn line_pointers_and_tuple_headers_read_like_pageinspect() {
                 block_number: BlockNumber(block_number),
             };
             let page = buffers.validated_read(block).unwrap();
-            let max = page.max_offset_number().unwrap().map_or(0, |max| max.0.get());
+            let max = page.max_line_pointer_number().unwrap().map_or(0, |max| max.0.get());
             (1..=max)
-                .map(|offset| {
-                    let offset = OffsetNumber(NonZeroU16::new(offset).unwrap());
-                    heap_page_item(&page, block_number, offset)
+                .map(|line_pointer_number| {
+                    let line_pointer_number =
+                        LinePointerNumber(NonZeroU16::new(line_pointer_number).unwrap());
+                    heap_page_item(&page, block_number, line_pointer_number)
                 })
                 .collect::<Vec<_>>()
         })
@@ -127,8 +128,12 @@ fn line_pointers_and_tuple_headers_read_like_pageinspect() {
 /// as Postgres prints them: `blkno`, `lp`, `lp_off`, `lp_flags`, `lp_len`,
 /// then the tuple header if the line pointer holds a tuple: `t_xmin`,
 /// `t_xmax`, `t_field3`, `t_ctid`, `t_infomask2`, `t_infomask` and `t_hoff`.
-fn heap_page_item(page: &Page, block_number: u32, offset: OffsetNumber) -> Vec<Option<String>> {
-    let line_pointer = page.line_pointer(offset).unwrap().unwrap();
+fn heap_page_item(
+    page: &Page,
+    block_number: u32,
+    line_pointer_number: LinePointerNumber,
+) -> Vec<Option<String>> {
+    let line_pointer = page.line_pointer(line_pointer_number).unwrap().unwrap();
     let (lp_off, lp_flags, lp_len) = match line_pointer {
         LinePointer::Unused => (0, 0, 0),
         LinePointer::Normal { offset, len } => (offset.0, 1, len),
@@ -137,7 +142,7 @@ fn heap_page_item(page: &Page, block_number: u32, offset: OffsetNumber) -> Vec<O
     };
     let mut item: Vec<_> = [
         block_number,
-        offset.0.get().into(),
+        line_pointer_number.0.get().into(),
         lp_off.into(),
         lp_flags,
         lp_len.into(),
@@ -203,15 +208,15 @@ fn unescape(field: &str) -> String {
     text
 }
 
-/// Parses a TID as Postgres prints it: `(block,offset)`.
+/// Parses a TID as Postgres prints it: `(block,line pointer number)`.
 fn parse_tid(text: &str) -> Tid {
-    let (block, offset) = text
+    let (block, line_pointer_number) = text
         .strip_prefix('(')
         .and_then(|text| text.strip_suffix(')'))
         .and_then(|text| text.split_once(','))
         .unwrap_or_else(|| panic!("not a TID: {text}"));
     Tid {
         block: BlockNumber(block.parse().unwrap()),
-        offset: OffsetNumber(offset.parse().unwrap()),
+        line_pointer_number: LinePointerNumber(line_pointer_number.parse().unwrap()),
     }
 }

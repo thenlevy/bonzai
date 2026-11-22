@@ -23,7 +23,7 @@ pub struct Item<'a>(pub &'a [u8]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Tid {
     pub block: BlockNumber,
-    pub offset: OffsetNumber,
+    pub line_pointer_number: LinePointerNumber,
 }
 
 pub const TID_SIZE_BYTES: usize = 6;
@@ -36,23 +36,25 @@ impl Tid {
         let half = |i: usize| u32::from(u16::from_le_bytes([bytes[i], bytes[i + 1]]));
         Some(Tid {
             block: BlockNumber((half(0) << 16) | half(2)),
-            offset: OffsetNumber(NonZeroU16::new(u16::from_le_bytes([bytes[4], bytes[5]]))?),
+            line_pointer_number: LinePointerNumber(NonZeroU16::new(u16::from_le_bytes([
+                bytes[4], bytes[5],
+            ]))?),
         })
     }
 }
 
-/// `(block,offset)`, as Postgres prints a `ctid`.
+/// `(block,line pointer number)`, as Postgres prints a `ctid`.
 impl fmt::Display for Tid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({},{})", self.block.0, self.offset.0)
+        write!(f, "({},{})", self.block.0, self.line_pointer_number.0)
     }
 }
 
 /// Position of a line pointer in a page's array, counting from 1.
 ///
-/// Minus one, this is the index in the page's array of line pointers.
+/// This minus one is the index in the page's array of line pointers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct OffsetNumber(pub NonZeroU16);
+pub struct LinePointerNumber(pub NonZeroU16);
 
 /// Size of a line pointer. Postgres's `sizeof(ItemIdData)`.
 pub const LINE_POINTER_SIZE_BYTES: usize = 4;
@@ -74,11 +76,11 @@ pub enum LinePointer {
     /// Points to another line pointer on the same page.
     /// This TID refers to a slot that used to hold a dead tuple, whose bytes have now
     /// been removed from the page, while its row lives on in a newer version on the same page.
-    /// The line pointer holds the offset number of the first version that survived, or `None`
-    /// if that number is 0, which Postgres never writes: the page is corrupt.
+    /// The line pointer holds the line pointer number of the first version that survived, or
+    /// `None` if that number is 0, which Postgres never writes: the page is corrupt.
     /// Postgres's `LP_REDIRECT`.
     /// See [Heap-Only Tuples](https://www.postgresql.org/docs/current/storage-hot.html).
-    Redirect(Option<OffsetNumber>),
+    Redirect(Option<LinePointerNumber>),
     /// Points to nothing. This TID refers to a slot whose tuple is dead to every transaction,
     /// but indexes may still hold the TID, so the slot cannot be reused yet. The tuple's bytes
     /// may still be in the page, as on B-tree pages, or already removed with a `len` of 0, as
@@ -89,20 +91,21 @@ pub enum LinePointer {
 impl From<u32> for LinePointer {
     fn from(raw: u32) -> Self {
         // Postgres's `ItemIdData` packs the following into 32 bits, from the lowest bits up:
-        // - an offset into the page (15 bits)
+        // - `lp_off` (15 bits): a byte offset into the page, except in a redirect, where it is a
+        //   line pointer number
         // - a state (2 bits)
         // - a length (15 bits)
-        let offset = (raw & 0b_0111_1111_1111_1111) as u16;
+        let lp_off = (raw & 0b_0111_1111_1111_1111) as u16;
         let len = (raw >> 17) as u16;
         match (raw >> 15) & 0b_11 {
             0b_00 => LinePointer::Unused,
             0b_01 => LinePointer::Normal {
-                offset: LocationIndex(offset),
+                offset: LocationIndex(lp_off),
                 len,
             },
-            0b_10 => LinePointer::Redirect(NonZeroU16::new(offset).map(OffsetNumber)),
+            0b_10 => LinePointer::Redirect(NonZeroU16::new(lp_off).map(LinePointerNumber)),
             0b_11 => LinePointer::Dead {
-                offset: LocationIndex(offset),
+                offset: LocationIndex(lp_off),
                 len,
             },
             _ => unreachable!(),
@@ -139,12 +142,17 @@ impl Page {
             .0)
     }
 
-    pub fn max_offset_number(&self) -> Result<Option<OffsetNumber>, InvalidHeader> {
-        Ok(NonZeroU16::new(self.line_pointers()?.len() as u16).map(OffsetNumber))
+    /// The number of the page's last line pointer, or `None` if the page has no line pointer.
+    /// Postgres's `PageGetMaxOffsetNumber`.
+    pub fn max_line_pointer_number(&self) -> Result<Option<LinePointerNumber>, InvalidHeader> {
+        Ok(NonZeroU16::new(self.line_pointers()?.len() as u16).map(LinePointerNumber))
     }
 
-    pub fn line_pointer(&self, offset: OffsetNumber) -> Result<Option<LinePointer>, InvalidHeader> {
-        let index = usize::from(offset.0.get()) - 1;
+    pub fn line_pointer(
+        &self,
+        line_pointer_number: LinePointerNumber,
+    ) -> Result<Option<LinePointer>, InvalidHeader> {
+        let index = usize::from(line_pointer_number.0.get()) - 1;
         let Some(raw) = self.line_pointers()?.get(index) else {
             return Ok(None);
         };
@@ -165,15 +173,13 @@ impl PageWithValidatedHeader<'_> {
                 page_pd_special: header.special,
             });
         }
-        Ok(Item(
-            self.page
-                .get(usize::from(offset.0)..end)
-                .ok_or(InvalidItemError {
-                    offset,
-                    len,
-                    page_pd_upper: header.upper,
-                    page_pd_special: header.special,
-                })?,
-        ))
+        Ok(Item(self.page.get(usize::from(offset.0)..end).ok_or(
+            InvalidItemError {
+                offset,
+                len,
+                page_pd_upper: header.upper,
+                page_pd_special: header.special,
+            },
+        )?))
     }
 }

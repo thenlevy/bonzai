@@ -48,8 +48,8 @@ pub struct TupleHeader {
     /// the old VACUUM FULL of Postgres 8.4 and before.
     pub cid: u32,
     /// The tuple's own TID, or its newer version's once an UPDATE wrote one.
-    /// `None` if its offset is 0, which Postgres never writes: the page is
-    /// corrupt.
+    /// `None` if its line pointer number is 0, which Postgres never writes:
+    /// the page is corrupt.
     pub ctid: Option<Tid>,
     /// = 0b_OHK0_0nnn_nnnn_nnnn
     ///
@@ -76,8 +76,9 @@ pub struct TupleHeader {
     /// - `v` [`Self::has_varwidth`]
     /// - `n` [`Self::has_null`]
     pub infomask: u16,
-    /// Offset of the first column: past the header, the null bitmap and the
-    /// padding that aligns the columns to [`MAXIMUM_ALIGNOF_BYTES`].
+    /// Size of the tuple header in bytes: its fixed part, the null bitmap, and
+    /// the padding that aligns the columns to [`MAXIMUM_ALIGNOF_BYTES`]. The
+    /// columns start that many bytes into the tuple. Postgres's `t_hoff`.
     pub hoff: u8,
 }
 
@@ -139,8 +140,8 @@ impl<'a> Item<'a> {
 pub enum TupleError {
     /// The tuple is shorter than its header or one of its lengths says.
     Truncated,
-    /// `t_hoff` leaves no room for the header and the null bitmap, or isn't
-    /// aligned.
+    /// `t_hoff` leaves no room for the fixed part of the header and the null
+    /// bitmap, or isn't aligned.
     BadHeaderSize {
         hoff: u8,
     },
