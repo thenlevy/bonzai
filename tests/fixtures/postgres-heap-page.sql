@@ -10,7 +10,7 @@ SELECT count(*) FROM t \gset
 CHECKPOINT;
 
 -- Dump the page's header in human readable format.
-CREATE EXTENSION pageinspect;
+CREATE EXTENSION IF NOT EXISTS pageinspect;
 SELECT pg_relation_filepath('t') AS path,
     lsn - '0/0' AS lsn,
     checksum::int & 65535 AS checksum,

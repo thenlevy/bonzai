@@ -6,7 +6,9 @@
 //! tests/fixtures/make-db.sh
 //! ```
 
-use std::{collections::HashMap, fmt::Debug, fs, str::FromStr, sync::LazyLock};
+mod common;
+
+use std::sync::LazyLock;
 
 use bonsai::{
     TransactionId, XLogRecPtr,
@@ -16,9 +18,7 @@ use bonsai::{
         page::{Header, LocationIndex, Page, PageFlags, PageValidationError},
     },
 };
-
-/// The cluster `make-db.sh` builds, and the facts it saves next to it.
-const POSTGRES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/postgres");
+use common::{Facts, read};
 
 /// Block 0 of the table `postgres-heap-page.sql` creates.
 struct Fixture {
@@ -89,35 +89,4 @@ fn postgres_page_at_another_block_fails() {
         Err(PageValidationError::ChecksumMismatch { block: BlockNumber(1), stored, .. })
             if stored == POSTGRES.header.checksum
     ));
-}
-
-/// What a fixture script printed: one `name=value` line per value.
-struct Facts(HashMap<String, String>);
-
-impl Facts {
-    fn read(fixture: &str) -> Self {
-        let text = String::from_utf8(read(&format!("{fixture}.facts"))).unwrap();
-        let values = text
-            .lines()
-            .filter_map(|line| line.split_once('='))
-            .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .collect();
-        Facts(values)
-    }
-
-    fn get<T: FromStr<Err: Debug>>(&self, name: &str) -> T {
-        let value = self
-            .0
-            .get(name)
-            .unwrap_or_else(|| panic!("no {name} in the facts"));
-        value.parse().unwrap()
-    }
-}
-
-/// Reads a file under `postgres/`. Panics if it isn't there.
-fn read(path: &str) -> Vec<u8> {
-    let path = format!("{POSTGRES_DIR}/{path}");
-    fs::read(&path).unwrap_or_else(|err| {
-        panic!("could not read {path}: {err}. Build the cluster with `tests/fixtures/make-db.sh`.")
-    })
 }
