@@ -165,7 +165,7 @@ fn heap_page_item(
             header.ctid.unwrap().to_string(),
             header.infomask2.to_string(),
             header.infomask.to_string(),
-            header.hoff.to_string(),
+            header.header_size.to_string(),
         ]
         .map(Some),
     );

@@ -179,7 +179,7 @@ mod tests {
                 ctid: None,
                 infomask2: natts,
                 infomask: 0,
-                hoff: 24,
+                header_size: 24,
             },
             null_bitmap,
             columns_data,

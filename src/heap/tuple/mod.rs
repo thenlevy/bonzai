@@ -79,7 +79,7 @@ pub struct TupleHeader {
     /// Size of the tuple header in bytes: its fixed part, the null bitmap, and
     /// the padding that aligns the columns to [`MAXIMUM_ALIGNOF_BYTES`]. The
     /// columns start that many bytes into the tuple. Postgres's `t_hoff`.
-    pub hoff: u8,
+    pub header_size: u8,
 }
 
 impl<'a> Item<'a> {
@@ -114,18 +114,22 @@ impl<'a> Item<'a> {
             ),
             infomask2: u16_at!(18),
             infomask: u16_at!(20),
-            hoff: header_data[22],
+            header_size: header_data[22],
         };
         let bitmap_len = if header.has_null() {
             usize::from(header.natts()).div_ceil(8)
         } else {
             0
         };
-        let hoff = usize::from(header.hoff);
-        if hoff < SIZEOF_HEAP_TUPLE_HEADER + bitmap_len || hoff % MAXIMUM_ALIGNOF_BYTES != 0 {
-            return Err(TupleError::BadHeaderSize { hoff: header.hoff });
+        let header_size = usize::from(header.header_size);
+        if header_size < SIZEOF_HEAP_TUPLE_HEADER + bitmap_len
+            || header_size % MAXIMUM_ALIGNOF_BYTES != 0
+        {
+            return Err(TupleError::BadHeaderSize {
+                header_size: header.header_size,
+            });
         }
-        let columns_data = self.0.get(hoff..).ok_or(TupleError::Truncated)?;
+        let columns_data = self.0.get(header_size..).ok_or(TupleError::Truncated)?;
         let bitmap = &self.0[SIZEOF_HEAP_TUPLE_HEADER..SIZEOF_HEAP_TUPLE_HEADER + bitmap_len];
         Ok(Tuple {
             header,
@@ -143,7 +147,7 @@ pub enum TupleError {
     /// `t_hoff` leaves no room for the fixed part of the header and the null
     /// bitmap, or isn't aligned.
     BadHeaderSize {
-        hoff: u8,
+        header_size: u8,
     },
     /// The tuple doesn't have the expected number of columns.
     NumberOfAttributes {

@@ -199,9 +199,9 @@ mod tests {
         bytes[0..4].copy_from_slice(&100u32.to_le_bytes());
         bytes[18..20].copy_from_slice(&3u16.to_le_bytes());
         bytes[20..22].copy_from_slice(&infomask.to_le_bytes());
-        let hoff = SIZEOF_HEAP_TUPLE_HEADER.next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
-        bytes.resize(hoff, 0);
-        bytes[22] = hoff as u8;
+        let header_size = SIZEOF_HEAP_TUPLE_HEADER.next_multiple_of(MAXIMUM_ALIGNOF_BYTES);
+        bytes.resize(header_size, 0);
+        bytes[22] = header_size as u8;
         bytes.extend(row.id.to_le_bytes());
         bytes.extend(short_varlena(row.payload.unwrap().as_bytes()));
         bytes.extend(short_varlena(row.non_null_payload.as_bytes()));
