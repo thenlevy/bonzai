@@ -72,10 +72,14 @@ fn fork_of(path: &Path) -> Option<ForkIdentifier> {
     })
 }
 
-fn read(smgr: &StorageManager, fork: ForkIdentifier, block: u32) -> Result<Page, BlockError> {
+fn read(
+    smgr: &StorageManager,
+    fork: ForkIdentifier,
+    block_number: u32,
+) -> Result<Page, BlockError> {
     let block = BlockIdentifier {
         fork,
-        block_number: BlockNumber(block),
+        block_number: BlockNumber(block_number),
     };
     let mut page = Page { bytes: [0; BLCKSZ_BYTES] };
     smgr.read(block, &mut page).map(|()| page)

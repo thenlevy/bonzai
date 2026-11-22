@@ -22,7 +22,7 @@ pub struct Item<'a>(pub &'a [u8]);
 /// `ItemPointerData`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Tid {
-    pub block: BlockNumber,
+    pub block_number: BlockNumber,
     pub line_pointer_number: LinePointerNumber,
 }
 
@@ -35,7 +35,7 @@ impl Tid {
     pub fn from_bytes(bytes: &[u8; TID_SIZE_BYTES]) -> Option<Self> {
         let half = |i: usize| u32::from(u16::from_le_bytes([bytes[i], bytes[i + 1]]));
         Some(Tid {
-            block: BlockNumber((half(0) << 16) | half(2)),
+            block_number: BlockNumber((half(0) << 16) | half(2)),
             line_pointer_number: LinePointerNumber(NonZeroU16::new(u16::from_le_bytes([
                 bytes[4], bytes[5],
             ]))?),
@@ -43,10 +43,14 @@ impl Tid {
     }
 }
 
-/// `(block,line pointer number)`, as Postgres prints a `ctid`.
+/// `(block number,line pointer number)`, as Postgres prints a `ctid`.
 impl fmt::Display for Tid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({},{})", self.block.0, self.line_pointer_number.0)
+        write!(
+            f,
+            "({},{})",
+            self.block_number.0, self.line_pointer_number.0
+        )
     }
 }
 

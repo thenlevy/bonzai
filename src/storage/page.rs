@@ -58,7 +58,7 @@ impl PageWithValidatedHeader<'_> {
 /// A page whose checksum has been computed for a specific block.
 pub struct SealedValidatedPage<'a> {
     page: Cow<'a, Page>,
-    block: BlockNumber,
+    block_number: BlockNumber,
 }
 
 impl SealedValidatedPage<'_> {
@@ -66,9 +66,9 @@ impl SealedValidatedPage<'_> {
         &self.page
     }
 
-    /// The block the page's checksum was computed for.
-    pub fn block(&self) -> BlockNumber {
-        self.block
+    /// The number of the block the page's checksum was computed for.
+    pub fn block_number(&self) -> BlockNumber {
+        self.block_number
     }
 }
 
@@ -174,67 +174,67 @@ impl Page {
         write_u32(self, 20, header.prune_xid.map_or(0, u32::from));
     }
 
-    /// Set the checksum for self at `block`, and locks self into a validated state.
+    /// Set the checksum for self at `block_number`, and locks self into a validated state.
     pub fn try_set_checksum_for_block(
         mut self,
-        block: BlockNumber,
+        block_number: BlockNumber,
     ) -> Result<SealedValidatedPage<'static>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
                 Ok(SealedValidatedPage {
                     page: Cow::Owned(self),
-                    block,
+                    block_number,
                 })
             } else {
-                Err(PageValidationError::InvalidHeader { block })
+                Err(PageValidationError::InvalidHeader { block_number })
             };
         }
 
         if self.header().is_err() {
-            return Err(PageValidationError::InvalidHeader { block });
+            return Err(PageValidationError::InvalidHeader { block_number });
         }
 
-        let checksum = checksum_page(&self, block);
+        let checksum = checksum_page(&self, block_number);
         self[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         Ok(SealedValidatedPage {
             page: Cow::Owned(self),
-            block,
+            block_number,
         })
     }
 
-    /// Try to validate self for `block`. Returns an error if the checksum doesn't match or the
+    /// Try to validate self for `block_number`. Returns an error if the checksum doesn't match or the
     /// header is invalid.
     pub fn try_validated_for_block<'a>(
         &'a self,
-        block: BlockNumber,
+        block_number: BlockNumber,
     ) -> Result<SealedValidatedPage<'a>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
                 Ok(SealedValidatedPage {
                     page: Cow::Borrowed(self),
-                    block,
+                    block_number,
                 })
             } else {
-                Err(PageValidationError::InvalidHeader { block })
+                Err(PageValidationError::InvalidHeader { block_number })
             };
         }
         // Read on its own, so that a checksum mismatch is reported even when
         // `header()` rejects the header.
         let stored = read_u16(self, PD_CHECKSUM.start);
-        let computed = checksum_page(self, block);
+        let computed = checksum_page(self, block_number);
         if stored != computed {
             return Err(PageValidationError::ChecksumMismatch {
-                block,
+                block_number,
                 stored,
                 computed,
             });
         }
         if self.header().is_err() {
-            return Err(PageValidationError::InvalidHeader { block });
+            return Err(PageValidationError::InvalidHeader { block_number });
         }
         Ok(SealedValidatedPage {
             page: Cow::Borrowed(self),
-            block,
+            block_number,
         })
     }
 }
@@ -319,12 +319,12 @@ impl std::error::Error for InvalidHeader {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageValidationError {
     ChecksumMismatch {
-        block: BlockNumber,
+        block_number: BlockNumber,
         stored: u16,
         computed: u16,
     },
     InvalidHeader {
-        block: BlockNumber,
+        block_number: BlockNumber,
     },
 }
 
@@ -332,16 +332,16 @@ impl fmt::Display for PageValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PageValidationError::ChecksumMismatch {
-                block,
+                block_number,
                 stored,
                 computed,
             } => write!(
                 f,
-                "page verification failed in block {block}: \
+                "page verification failed in block {block_number}: \
                  calculated checksum {computed} but expected {stored}"
             ),
-            PageValidationError::InvalidHeader { block } => {
-                write!(f, "invalid page header in block {block}")
+            PageValidationError::InvalidHeader { block_number } => {
+                write!(f, "invalid page header in block {block_number}")
             }
         }
     }
@@ -437,9 +437,9 @@ mod tests {
         page
     }
 
-    /// `page` with its checksum set for `block`.
-    fn sealed(page: Page, block: BlockNumber) -> Page {
-        let validated = page.try_set_checksum_for_block(block).unwrap();
+    /// `page` with its checksum set for `block_number`.
+    fn sealed(page: Page, block_number: BlockNumber) -> Page {
+        let validated = page.try_set_checksum_for_block(block_number).unwrap();
         validated.page().clone()
     }
 
@@ -529,9 +529,9 @@ mod tests {
     #[test]
     fn page_at_the_wrong_block_is_caught() {
         let page = sealed(sample_page(), BlockNumber(5));
-        for block in (0..1000u32).filter(|&block| block != 5) {
+        for block_number in (0..1000u32).filter(|&block_number| block_number != 5) {
             assert!(matches!(
-                page.try_validated_for_block(BlockNumber(block)),
+                page.try_validated_for_block(BlockNumber(block_number)),
                 Err(PageValidationError::ChecksumMismatch { .. })
             ));
         }
@@ -550,7 +550,7 @@ mod tests {
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
             Err(PageValidationError::InvalidHeader {
-                block: BlockNumber(0)
+                block_number: BlockNumber(0)
             })
         ));
     }
@@ -566,7 +566,7 @@ mod tests {
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
             Err(PageValidationError::InvalidHeader {
-                block: BlockNumber(0)
+                block_number: BlockNumber(0)
             })
         ));
     }
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(
             page.try_set_checksum_for_block(BlockNumber(0)).err(),
             Some(PageValidationError::InvalidHeader {
-                block: BlockNumber(0)
+                block_number: BlockNumber(0)
             })
         );
     }
@@ -594,7 +594,7 @@ mod tests {
         assert!(matches!(
             page.try_validated_for_block(BlockNumber(0)),
             Err(PageValidationError::InvalidHeader {
-                block: BlockNumber(0)
+                block_number: BlockNumber(0)
             })
         ));
     }

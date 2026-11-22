@@ -230,9 +230,9 @@ impl StorageManager {
         self.dir.join(name)
     }
 
-    fn position(&self, block: BlockNumber) -> Position {
-        let segno = block.0 / self.n_block_per_segment.0;
-        let offset = u64::from(block.0 % self.n_block_per_segment.0) * BLCKSZ_BYTES as u64;
+    fn position(&self, block_number: BlockNumber) -> Position {
+        let segno = block_number.0 / self.n_block_per_segment.0;
+        let offset = u64::from(block_number.0 % self.n_block_per_segment.0) * BLCKSZ_BYTES as u64;
         Position {
             segno,
             offset_bytes: offset,

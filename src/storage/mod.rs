@@ -28,7 +28,7 @@ impl fmt::Display for BlockNumber {
 pub struct BlockCount(pub u32);
 
 impl BlockCount {
-    pub fn contains(self, block: BlockNumber) -> bool {
-        block.0 < self.0
+    pub fn contains(self, block_number: BlockNumber) -> bool {
+        block_number.0 < self.0
     }
 }

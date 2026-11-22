@@ -78,7 +78,7 @@ fn sealing_writes_back_what_postgres_wrote() {
     header.checksum = 0;
     page.set_header(header);
     let sealed = page.try_set_checksum_for_block(BlockNumber(0)).unwrap();
-    assert_eq!(sealed.block(), BlockNumber(0));
+    assert_eq!(sealed.block_number(), BlockNumber(0));
     assert_eq!(sealed.page(), &POSTGRES.page);
 }
 
@@ -86,7 +86,7 @@ fn sealing_writes_back_what_postgres_wrote() {
 fn postgres_page_at_another_block_fails() {
     assert!(matches!(
         POSTGRES.page.try_validated_for_block(BlockNumber(1)),
-        Err(PageValidationError::ChecksumMismatch { block: BlockNumber(1), stored, .. })
+        Err(PageValidationError::ChecksumMismatch { block_number: BlockNumber(1), stored, .. })
             if stored == POSTGRES.header.checksum
     ));
 }

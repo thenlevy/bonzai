@@ -20,8 +20,8 @@ pub struct SeqScan<'a> {
     buffers: &'a BufferManager,
     fork: ForkIdentifier,
     block_count: BlockCount,
-    /// The next block to read.
-    next_block: BlockNumber,
+    /// The number of the next block to read.
+    next_block_number: BlockNumber,
     /// The page being scanned, and the next line pointer to look at.
     current: Option<(PageGuard<'a>, LinePointerNumber)>,
     done: bool,
@@ -32,9 +32,9 @@ pub enum ScanError {
     /// The heap's main fork can't be opened.
     Fork(ForkError),
     Read(ReadError),
-    /// The header of `block` doesn't describe its line pointers.
+    /// The header of block `block_number` doesn't describe its line pointers.
     Header {
-        block: BlockNumber,
+        block_number: BlockNumber,
         error: InvalidHeader,
     },
     /// The line pointer at `tid` points outside the page's tuples.
@@ -59,7 +59,7 @@ impl<'a> SeqScan<'a> {
             buffers,
             fork,
             block_count,
-            next_block: BlockNumber(0),
+            next_block_number: BlockNumber(0),
             current: None,
             done: false,
         })
@@ -68,23 +68,26 @@ impl<'a> SeqScan<'a> {
     fn next_row(&mut self) -> Result<Option<(Tid, Row)>, ScanError> {
         loop {
             let Some((page, next)) = &mut self.current else {
-                if !self.block_count.contains(self.next_block) {
+                if !self.block_count.contains(self.next_block_number) {
                     return Ok(None);
                 }
                 let block = BlockIdentifier {
                     fork: self.fork,
-                    block_number: self.next_block,
+                    block_number: self.next_block_number,
                 };
                 let page = self
                     .buffers
                     .validated_read(block)
                     .map_err(ScanError::Read)?;
                 self.current = Some((page, LinePointerNumber(NonZeroU16::MIN)));
-                self.next_block.0 += 1;
+                self.next_block_number.0 += 1;
                 continue;
             };
-            let block = page.block().block_number;
-            let header_error = |error| ScanError::Header { block, error };
+            let block_number = page.block().block_number;
+            let header_error = |error| ScanError::Header {
+                block_number,
+                error,
+            };
 
             // We go to the next page if the current is empty (max_line_pointer_number is None) or
             // if we have read it entirely (next > max_line_pointer_number).
@@ -95,7 +98,7 @@ impl<'a> SeqScan<'a> {
             }
 
             let tid = Tid {
-                block,
+                block_number,
                 line_pointer_number: *next,
             };
             next.0 = next.0.saturating_add(1);
@@ -170,9 +173,9 @@ mod tests {
     /// Hint bits of a row inserted by a committed transaction and never deleted.
     const LIVE: u16 = HEAP_XMIN_COMMITTED | HEAP_XMAX_INVALID;
 
-    fn tid(block: u32, line_pointer_number: u16) -> Tid {
+    fn tid(block_number: u32, line_pointer_number: u16) -> Tid {
         Tid {
-            block: BlockNumber(block),
+            block_number: BlockNumber(block_number),
             line_pointer_number: LinePointerNumber(NonZeroU16::new(line_pointer_number).unwrap()),
         }
     }
@@ -222,8 +225,8 @@ mod tests {
         Raw(u32),
     }
 
-    /// A heap page holding `slots`, with its checksum set for `block`.
-    fn page(block: u32, slots: &[Slot]) -> Page {
+    /// A heap page holding `slots`, with its checksum set for `block_number`.
+    fn page(block_number: u32, slots: &[Slot]) -> Page {
         let mut page = Page {
             bytes: [0; BLCKSZ_BYTES],
         };
@@ -248,7 +251,9 @@ mod tests {
             header.lower = PageOffset((lower + LINE_POINTER_SIZE_BYTES) as u16);
         }
         page.set_header(header);
-        let sealed = page.try_set_checksum_for_block(BlockNumber(block)).unwrap();
+        let sealed = page
+            .try_set_checksum_for_block(BlockNumber(block_number))
+            .unwrap();
         sealed.page().clone()
     }
 

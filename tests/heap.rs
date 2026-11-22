@@ -56,7 +56,7 @@ fn a_sequential_scan_returns_what_select_returned() {
         assert!(expected.iter().any(|(_, row)| case(row)), "no {what}");
     };
     assert!(
-        expected.last().unwrap().0.block > BlockNumber(1),
+        expected.last().unwrap().0.block_number > BlockNumber(1),
         "a single page"
     );
     has("NULL", &|row| row.payload.is_none());
@@ -208,15 +208,15 @@ fn unescape(field: &str) -> String {
     text
 }
 
-/// Parses a TID as Postgres prints it: `(block,line pointer number)`.
+/// Parses a TID as Postgres prints it: `(block number,line pointer number)`.
 fn parse_tid(text: &str) -> Tid {
-    let (block, line_pointer_number) = text
+    let (block_number, line_pointer_number) = text
         .strip_prefix('(')
         .and_then(|text| text.strip_suffix(')'))
         .and_then(|text| text.split_once(','))
         .unwrap_or_else(|| panic!("not a TID: {text}"));
     Tid {
-        block: BlockNumber(block.parse().unwrap()),
+        block_number: BlockNumber(block_number.parse().unwrap()),
         line_pointer_number: LinePointerNumber(line_pointer_number.parse().unwrap()),
     }
 }

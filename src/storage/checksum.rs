@@ -43,11 +43,11 @@ fn checksum_block(page: &Page) -> u32 {
     sums.iter().fold(0, |result, sum| result ^ sum)
 }
 
-/// The checksum `page` should carry when stored at `block`. The page's own
+/// The checksum `page` should carry when stored at `block_number`. The page's own
 /// `pd_checksum` field is read as zero.
-pub fn checksum_page(page: &Page, block: BlockNumber) -> u16 {
+pub fn checksum_page(page: &Page, block_number: BlockNumber) -> u16 {
     // Mixing in the block number catches a valid page written to the wrong place.
-    let checksum = checksum_block(page) ^ block.0;
+    let checksum = checksum_block(page) ^ block_number.0;
     // Fold to 16 bits, plus one so that a checksum is never zero.
     (checksum % 65535 + 1) as u16
 }
