@@ -56,12 +56,12 @@ impl PageWithValidatedHeader<'_> {
 }
 
 /// A page whose checksum has been computed for a specific block.
-pub struct ScealedValidatedPage<'a> {
+pub struct SealedValidatedPage<'a> {
     page: Cow<'a, Page>,
     block: BlockNumber,
 }
 
-impl ScealedValidatedPage<'_> {
+impl SealedValidatedPage<'_> {
     pub fn page(&self) -> &Page {
         &self.page
     }
@@ -178,10 +178,10 @@ impl Page {
     pub fn try_set_checksum_for_block(
         mut self,
         block: BlockNumber,
-    ) -> Result<ScealedValidatedPage<'static>, PageValidationError> {
+    ) -> Result<SealedValidatedPage<'static>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
-                Ok(ScealedValidatedPage {
+                Ok(SealedValidatedPage {
                     page: Cow::Owned(self),
                     block,
                 })
@@ -196,7 +196,7 @@ impl Page {
 
         let checksum = checksum_page(&self, block);
         self[PD_CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
-        Ok(ScealedValidatedPage {
+        Ok(SealedValidatedPage {
             page: Cow::Owned(self),
             block,
         })
@@ -207,10 +207,10 @@ impl Page {
     pub fn try_validated_for_block<'a>(
         &'a self,
         block: BlockNumber,
-    ) -> Result<ScealedValidatedPage<'a>, PageValidationError> {
+    ) -> Result<SealedValidatedPage<'a>, PageValidationError> {
         if self.is_uninitialized() {
             return if self.iter().all(|&byte| byte == 0) {
-                Ok(ScealedValidatedPage {
+                Ok(SealedValidatedPage {
                     page: Cow::Borrowed(self),
                     block,
                 })
@@ -232,7 +232,7 @@ impl Page {
         if self.header().is_err() {
             return Err(PageValidationError::InvalidHeader { block });
         }
-        Ok(ScealedValidatedPage {
+        Ok(SealedValidatedPage {
             page: Cow::Borrowed(self),
             block,
         })
